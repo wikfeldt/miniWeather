@@ -45,10 +45,9 @@ function main()
         println("  $arg  =>  $val")
     end
 
-    state, state_tmp, flux, tend, hy_dens_cell, hy_dens_theta_cell, hy_dens_int, hy_dens_theta_int, hy_pressure_int = init(config);
+    model = init(config);
     #init(config);
-    println("sum = ", sum(vcat(tend...)))
-    
+    println(model)
 
 end
 
@@ -86,15 +85,17 @@ function init(config)
     data_spec_int = config["data_spec_int"]
 
     #Allocate the model data
-    state              = zeros(NUM_VARS, nz+2*hs, nx+2*hs)
-    state_tmp          = zeros(NUM_VARS, nz+2*hs, nx+2*hs)
-    flux               = zeros(NUM_VARS, nz+1, nx+1)
-    tend               = zeros(NUM_VARS, nz, nx)
-    hy_dens_cell       = zeros(nz+2*hs)
-    hy_dens_theta_cell = zeros(nz+2*hs)
-    hy_dens_int        = zeros(nz+1)
-    hy_dens_theta_int  = zeros(nz+1)
-    hy_pressure_int    = zeros(nz+1)
+    model = Model(
+        zeros(NUM_VARS, nz+2*hs, nx+2*hs),
+        zeros(NUM_VARS, nz+2*hs, nx+2*hs),
+        zeros(NUM_VARS, nz+1, nx+1),
+        zeros(NUM_VARS, nz, nx),
+        zeros(nz+2*hs),
+        zeros(nz+2*hs),
+        zeros(nz+1),
+        zeros(nz+1),
+        zeros(nz+1)
+    )
 
     #Define the maximum stable time step based on an assumed maximum wind speed
     dt = min(dx,dz) / max_speed * cfl
@@ -145,14 +146,14 @@ function init(config)
                     if data_spec_int == Int(DATA_SPEC_INJECTION)       injection!(x,z,r,u,w,t,hr,ht)       end
 
                     #Store into the fluid state array
-                    state[ID_DENS,k,i] += r                         * qweights[ii]*qweights[kk]
-                    state[ID_UMOM,k,i] += (r+hr)*u                  * qweights[ii]*qweights[kk]
-                    state[ID_WMOM,k,i] += (r+hr)*w                  * qweights[ii]*qweights[kk]
-                    state[ID_RHOT,k,i] += ( (r+hr)*(t+ht) - hr*ht ) * qweights[ii]*qweights[kk]
+                    model.state[ID_DENS,k,i] += r                         * qweights[ii]*qweights[kk]
+                    model.state[ID_UMOM,k,i] += (r+hr)*u                  * qweights[ii]*qweights[kk]
+                    model.state[ID_WMOM,k,i] += (r+hr)*w                  * qweights[ii]*qweights[kk]
+                    model.state[ID_RHOT,k,i] += ( (r+hr)*(t+ht) - hr*ht ) * qweights[ii]*qweights[kk]
                 end
             end
         for ll=1:NUM_VARS
-            state_tmp[ll,k,i] = state[ll,k,i]
+            model.state_tmp[ll,k,i] = model.state[ll,k,i]
         end
     end
 end
@@ -161,8 +162,6 @@ end
   # TODO: MAKE THIS LOOP A PARALLEL_FOR
   ########################/
   for k=1:nz+2*hs
-      hy_dens_cell[k] = 0.
-      hy_dens_theta_cell[k] = 0.
       for kk=1:nqpoints
           z = (k_beg + k-hs+0.5)*dz
           #Set the fluid state based on the user's specification
@@ -172,8 +171,8 @@ end
           if data_spec_int == Int(DATA_SPEC_TURBULENCE)      turbulence!(0.,z,r,u,w,t,hr,ht) end
           if data_spec_int == Int(DATA_SPEC_DENSITY_CURRENT) density_current!(0.,z,r,u,w,t,hr,ht) end
           if data_spec_int == Int(DATA_SPEC_INJECTION)       injection!(0.,z,r,u,w,t,hr,ht) end
-          hy_dens_cell[k] = hy_dens_cell[k] + hr    * qweights[kk] 
-          hy_dens_theta_cell[k] = hy_dens_theta_cell[k] + hr*ht * qweights[kk]
+          model.hy_dens_cell[k] = model.hy_dens_cell[k] + hr    * qweights[kk] 
+          model.hy_dens_theta_cell[k] = model.hy_dens_theta_cell[k] + hr*ht * qweights[kk]
       end
     end
     #Compute the hydrostatic background state at vertical cell interfaces
@@ -188,12 +187,12 @@ end
         if data_spec_int == Int(DATA_SPEC_TURBULENCE)     turbulence!(0.,z,r,u,w,t,hr,ht) end
         if data_spec_int == Int(DATA_SPEC_DENSITY_CURRENT) density_current!(0.,z,r,u,w,t,hr,ht) end
         if data_spec_int == Int(DATA_SPEC_INJECTION)      injection!(0.,z,r,u,w,t,hr,ht) end
-        hy_dens_int[k] = hr
-        hy_dens_theta_int[k] = hr * ht
-        hy_pressure_int[k] = C0 * (hr*ht)^gamm
+        model.hy_dens_int[k] = hr
+        model.hy_dens_theta_int[k] = hr * ht
+        model.hy_pressure_int[k] = C0 * (hr*ht)^gamm
     end
 
-    return state, state_tmp, flux, tend, hy_dens_cell, hy_dens_theta_cell, hy_dens_int, hy_dens_theta_int, hy_pressure_int;
+    return model
 end
 
 
