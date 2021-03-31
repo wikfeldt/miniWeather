@@ -1,5 +1,8 @@
 using ArgParse
 include("const.jl")
+include("Initialize.jl")
+
+using .Initialize: init, Model, Grid
 
 function parse_commandline()
     s = ArgParseSettings()
@@ -23,34 +26,6 @@ function parse_commandline()
         end
 
     return parse_args(s)
-end
-
-function main()
-
-    if !isinteractive()
-       config = parse_commandline()
-       println(typeof(config))
-    else 
-        config = Dict(
-            "nx_glob" => 100,
-            "nz_glob" => 50,
-            "sim_time" => 1000,
-            "output" => 10,
-            "data_spec_int" => Int(DATA_SPEC_THERMAL)
-            )
-    end
-
-    println("Parsed args:")
-    for (arg,val) in config
-        println("  $arg  =>  $val")
-    end
-
-    model, grid = init(config)
-    #init(config);
-    #println(model)
-
-    mass, te = reductions(model, grid)
-    println("mass = $mass, te = $te")
 end
 
 
@@ -87,306 +62,123 @@ function reductions(model::Model, grid::Grid)
 end
 
 
-function init(config) 
+#= 
 
-    r, hr, ht, u, w, t = 0., 0., 0., 0., 0., 0.
-    #  ierr = MPI_Init(argc,argv)
+#Output the fluid state (state) to a NetCDF file at a given elapsed model time (etime)
+#The file I/O uses parallel-netcdf, the only external library required for this mini-app.
+#If it's too cumbersome, you can comment the I/O out, but you'll miss out on some potentially cool graphics
+function output(state, etime, grid)
+  using NetCDF
+  integer :: ncid, t_dimid, x_dimid, z_dimid, dens_varid, uwnd_varid, wwnd_varid, theta_varid, t_varid
+  integer :: i,k
+  integer, save :: num_out = 0
+  integer(kind=MPI_OFFSET_KIND) :: len, st1(1),ct1(1),st3(3),ct3(3)
+  !Temporary arrays to hold density, u-wind, w-wind, and potential temperature (theta)
+  real(rp), allocatable :: dens(:,:), uwnd(:,:), wwnd(:,:), theta(:,:)
+  real(rp) :: etimearr(1)
+  #Allocate some (big) temp arrays
+  dens = zeros(grid.nx, grid.nz)
+  uwnd = xeros(grid.nx, grid.nz)
+  wwnd = zeros(grid.nx, grid.nz)
+  theta = zeros(grid.nx,grid.nz)
 
-    #Set the cell grid size
-    dx = xlen / config["nx_glob"]
-    dz = zlen / config["nz_glob"]
-    ##############################/
-    # BEGIN MPI DUMMY SECTION
-    # TODO: (1) GET NUMBER OF MPI RANKS
-    #       (2) GET MY MPI RANK ID (RANKS ARE ZERO-BASED INDEX)
-    #       (3) COMPUTE MY BEGINNING "I" INDEX (1-based index)
-    #       (4) COMPUTE HOW MANY X-DIRECTION CELLS MY RANK HAS
-    #       (5) FIND MY LEFT AND RIGHT NEIGHBORING RANK IDs
-    ##############################/
-    nranks = 1
-    myrank = 0
-    i_beg = 0
-    nx = config["nx_glob"]
-    left_rank = 0
-    right_rank = 0
-    #######################
-    # END MPI DUMMY SECTION
-    #######################
-    println("num_vars = $NUM_VARS")
-    #Vertical direction isn't MPI-ized, so the rank's local values = the global values
-    k_beg = 0
-    nz = config["nz_glob"]
-    #masterproc = (myrank == 0)
-    data_spec_int = config["data_spec_int"]
+  #If the elapsed time is zero, create the file. Otherwise, open the file
+  if etime == 0 
+    !Create the file
+    nccreate("output.nc", varname, "t", collect(11:20), "t", 20, Dict("units"=>"s"), atts=attribs)
 
-    #Allocate the model data
-    model = Model(
-        zeros(NUM_VARS, nz+2*hs, nx+2*hs),
-        zeros(NUM_VARS, nz+2*hs, nx+2*hs),
-        zeros(NUM_VARS, nz+1, nx+1),
-        zeros(NUM_VARS, nz, nx),
-        zeros(nz+2*hs),
-        zeros(nz+2*hs),
-        zeros(nz+1),
-        zeros(nz+1),
-        zeros(nz+1),
-    )
+    call ncwrap( nf90mpi_create( MPI_COMM_WORLD , 'output.nc' , nf90_clobber , MPI_INFO_NULL , ncid ) , __LINE__ )
+    !Create the dimensions
+    len=nf90_unlimited; call ncwrap( nfmpi_def_dim( ncid , 't' , len , t_dimid ) , __LINE__ )
+    len=nx_glob       ; call ncwrap( nfmpi_def_dim( ncid , 'x' , len , x_dimid ) , __LINE__ )
+    len=nz_glob       ; call ncwrap( nfmpi_def_dim( ncid , 'z' , len , z_dimid ) , __LINE__ )
+    !Create the variables
+    call ncwrap( nfmpi_def_var( ncid , 't' , nf90_double , 1 , (/ t_dimid /) , t_varid ) , __LINE__ )
+    call ncwrap( nfmpi_def_var( ncid , 'dens'  , nf90_double , 3 , (/ x_dimid , z_dimid , t_dimid /) ,  dens_varid ) , __LINE__ )
+    call ncwrap( nfmpi_def_var( ncid , 'uwnd'  , nf90_double , 3 , (/ x_dimid , z_dimid , t_dimid /) ,  uwnd_varid ) , __LINE__ )
+    call ncwrap( nfmpi_def_var( ncid , 'wwnd'  , nf90_double , 3 , (/ x_dimid , z_dimid , t_dimid /) ,  wwnd_varid ) , __LINE__ )
+    call ncwrap( nfmpi_def_var( ncid , 'theta' , nf90_double , 3 , (/ x_dimid , z_dimid , t_dimid /) , theta_varid ) , __LINE__ )
+    !End "define" mode
+    call ncwrap( nfmpi_enddef( ncid ) , __LINE__ )
+  else
+    !Open the file
+    call ncwrap( nfmpi_open( MPI_COMM_WORLD , 'output.nc' , nf90_write , MPI_INFO_NULL , ncid ) , __LINE__ )
+    !Get the variable IDs
+    call ncwrap( nfmpi_inq_varid( ncid , 'dens'  ,  dens_varid ) , __LINE__ )
+    call ncwrap( nfmpi_inq_varid( ncid , 'uwnd'  ,  uwnd_varid ) , __LINE__ )
+    call ncwrap( nfmpi_inq_varid( ncid , 'wwnd'  ,  wwnd_varid ) , __LINE__ )
+    call ncwrap( nfmpi_inq_varid( ncid , 'theta' , theta_varid ) , __LINE__ )
+    call ncwrap( nfmpi_inq_varid( ncid , 't'     ,     t_varid ) , __LINE__ )
+  endif
 
-    grid = Grid(nx, nz, dx, dz)
+  !Store perturbed values in the temp arrays for output
+  do k = 1 , nz
+    do i = 1 , nx
+      dens (i,k) = state(i,k,ID_DENS)
+      uwnd (i,k) = state(i,k,ID_UMOM) / ( hy_dens_cell(k) + state(i,k,ID_DENS) )
+      wwnd (i,k) = state(i,k,ID_WMOM) / ( hy_dens_cell(k) + state(i,k,ID_DENS) )
+      theta(i,k) = ( state(i,k,ID_RHOT) + hy_dens_theta_cell(k) ) / ( hy_dens_cell(k) + state(i,k,ID_DENS) ) - hy_dens_theta_cell(k) / hy_dens_cell(k)
+    enddo
+  enddo
 
-    #Define the maximum stable time step based on an assumed maximum wind speed
-    dt = min(dx,dz) / max_speed * cfl
-    #Set initial elapsed model time and output_counter to zero
-    etime = 0.
-    output_counter = 0.
+  !Write the grid data to file with all the processes writing collectively
+  st3=(/i_beg,k_beg,num_out+1/); ct3=(/nx,nz,1/); call ncwrap( nfmpi_put_vara_double_all( ncid ,  dens_varid , st3 , ct3 , dens  ) , __LINE__ )
+  st3=(/i_beg,k_beg,num_out+1/); ct3=(/nx,nz,1/); call ncwrap( nfmpi_put_vara_double_all( ncid ,  uwnd_varid , st3 , ct3 , uwnd  ) , __LINE__ )
+  st3=(/i_beg,k_beg,num_out+1/); ct3=(/nx,nz,1/); call ncwrap( nfmpi_put_vara_double_all( ncid ,  wwnd_varid , st3 , ct3 , wwnd  ) , __LINE__ )
+  st3=(/i_beg,k_beg,num_out+1/); ct3=(/nx,nz,1/); call ncwrap( nfmpi_put_vara_double_all( ncid , theta_varid , st3 , ct3 , theta ) , __LINE__ )
 
-    #If I'm the master process in MPI, display some grid information
-    #  if (masterproc) {
-    println("nx_glob, nz_glob: $nx $nz")
-    println("dx,dz: $dx $dz")
-    println("dt: $dt")
-    #  }
-    #Want to make sure this info is displayed before further output
-    #ierr = MPI_Barrier(MPI_COMM_WORLD)
+  !Only the master process needs to write the elapsed time
+  !Begin "independent" write mode
+  call ncwrap( nfmpi_begin_indep_data(ncid) , __LINE__ )
+  !write elapsed time to file
+  if (masterproc) then
+    st1=(/num_out+1/); ct1=(/1/); etimearr(1) = etime; call ncwrap( nfmpi_put_vara_double( ncid , t_varid , st1 , ct1 , etimearr ) , __LINE__ )
+  endif
+  !End "independent" write mode
+  call ncwrap( nfmpi_end_indep_data(ncid) , __LINE__ )
 
-    # Define quadrature weights and points
-    nqpoints = 3
-    qpoints = [0.112701665379258311482073460022, 
-               0.500000000000000000000000000000, 
-               0.887298334620741688517926539980]
+  !Close the file
+  call ncwrap( nf90mpi_close(ncid) , __LINE__ )
 
-    qweights = [0.277777777777777777777777777779,
-                0.444444444444444444444444444444,
-                0.277777777777777777777777777779]
+  !Increment the number of outputs
+  num_out = num_out + 1
 
-    #####################################
-    # Initialize the cell-averaged fluid state via Gauss-Legendre quadrature
-    #####################################
-    ########################/
-    # TODO: MAKE THESE 2 LOOPS A PARALLEL_FOR
-    ########################/
-    for k=1:nz+2*hs 
-        for i=1:nx+2*hs
-            #Use Gauss-Legendre quadrature to initialize a hydrostatic balance + temperature perturbation
-            for kk=1:nqpoints
-                for ii=1:nqpoints
-                    #Compute the x,z location within the global domain based on cell and quadrature index
-                    x = (i_beg + i-hs+0.5)*dx + (qpoints[ii]-0.5)*dx
-                    z = (k_beg + k-hs+0.5)*dz + (qpoints[kk]-0.5)*dz
-
-                    #Set the fluid state based on the user's specification
-                    if data_spec_int == Int(DATA_SPEC_COLLISION)      
-                        r, t, u, w, hr, ht = collision(x,z)
-                    elseif data_spec_int == Int(DATA_SPEC_THERMAL)
-                        r, t, u, w, hr, ht = thermal(x,z)  
-                    elseif data_spec_int == Int(DATA_SPEC_MOUNTAIN)
-                        r, t, u, w, hr, ht = mountain_waves(x,z) 
-                    elseif data_spec_int == Int(DATA_SPEC_TURBULENCE)     
-                        r, t, u, w, hr, ht = turbulence(x,z) 
-                    elseif data_spec_int == Int(DATA_SPEC_DENSITY_CURRENT) 
-                        r, t, u, w, hr, ht = density_current(x,z) 
-                    elseif data_spec_int == Int(DATA_SPEC_INJECTION)      
-                        r, t, u, w, hr, ht = injection(x,z) 
-                    end            
-                    #println(r, hr, u, w, ht)
-                    #Store into the fluid state array
-                    model.state[ID_DENS,k,i] += r                         * qweights[ii]*qweights[kk]
-                    model.state[ID_UMOM,k,i] += (r+hr)*u                  * qweights[ii]*qweights[kk]
-                    model.state[ID_WMOM,k,i] += (r+hr)*w                  * qweights[ii]*qweights[kk]
-                    model.state[ID_RHOT,k,i] += ( (r+hr)*(t+ht) - hr*ht ) * qweights[ii]*qweights[kk]
-                end
-            end
-            for ll=1:NUM_VARS
-                model.state_tmp[ll,k,i] = model.state[ll,k,i]
-            end
-        end
-    end
-    #Compute the hydrostatic background state over vertical cell averages
-    ########################/
-    # TODO: MAKE THIS LOOP A PARALLEL_FOR
-    ########################/
-    for k=1:nz+2*hs
-        for kk=1:nqpoints
-            z = (k_beg + k-hs+0.5)*dz
-            #Set the fluid state based on the user's specification
-            if data_spec_int == Int(DATA_SPEC_COLLISION)      
-                r, t, u, w, hr, ht = collision(0.,z)
-            elseif data_spec_int == Int(DATA_SPEC_THERMAL)
-                r, t, u, w, hr, ht = thermal(0.,z)  
-            elseif data_spec_int == Int(DATA_SPEC_MOUNTAIN)
-                r, t, u, w, hr, ht = mountain_waves(0.,z) 
-            elseif data_spec_int == Int(DATA_SPEC_TURBULENCE)     
-                r, t, u, w, hr, ht = turbulence(0.,z) 
-            elseif data_spec_int == Int(DATA_SPEC_DENSITY_CURRENT) 
-                r, t, u, w, hr, ht = density_current(0.,z) 
-            elseif data_spec_int == Int(DATA_SPEC_INJECTION)      
-                r, t, u, w, hr, ht = injection(0.,z) 
-            end
-            model.hy_dens_cell[k] = model.hy_dens_cell[k] + hr    * qweights[kk] 
-            model.hy_dens_theta_cell[k] = model.hy_dens_theta_cell[k] + hr*ht * qweights[kk]
-        end
-    end
-    #Compute the hydrostatic background state at vertical cell interfaces
-    ########################/
-    # TODO: MAKE THIS LOOP A PARALLEL_FOR
-    ########################/
-    for k=1:nz+1
-        z = (k_beg + k)*dz
-        if data_spec_int == Int(DATA_SPEC_COLLISION)      
-            r, t, u, w, hr, ht = collision(0.,z)
-        elseif data_spec_int == Int(DATA_SPEC_THERMAL)
-            r, t, u, w, hr, ht = thermal(0.,z)  
-        elseif data_spec_int == Int(DATA_SPEC_MOUNTAIN)
-            r, t, u, w, hr, ht = mountain_waves(0.,z) 
-        elseif data_spec_int == Int(DATA_SPEC_TURBULENCE)     
-            r, t, u, w, hr, ht = turbulence(0.,z) 
-        elseif data_spec_int == Int(DATA_SPEC_DENSITY_CURRENT) 
-            r, t, u, w, hr, ht = density_current(0.,z) 
-        elseif data_spec_int == Int(DATA_SPEC_INJECTION)      
-            r, t, u, w, hr, ht = injection(0.,z) 
-        end
-        model.hy_dens_int[k] = hr
-        model.hy_dens_theta_int[k] = hr * ht
-        model.hy_pressure_int[k] = C0 * (hr*ht)^gamma
-    end
-  
-    return model, grid
+  !Deallocate the temp arrays
+  deallocate(dens )
+  deallocate(uwnd )
+  deallocate(wwnd )
+  deallocate(theta)
 end 
+ =#
 
 
-#This test case is initially balanced but injects fast, cold air from the left boundary near the model top
-#x and z are input coordinates at which to sample
-#r,u,w,t are output density, u-wind, w-wind, and potential temperature at that location
-#hr and ht are output background hydrostatic density and potential temperature at that location
-function injection(x , z) 
-    hydro_const_theta(z,hr,ht)
-    r = 0.
-    t = 0.
-    u = 0.
-    w = 0.
-    return r, t, u, w, hr, ht
-end
 
+ function main()
 
-#Initialize a density current (falling cold thermal that propagates along the model bottom)
-#x and z are input coordinates at which to sample
-#r,u,w,t are output density, u-wind, w-wind, and potential temperature at that location
-#hr and ht are output background hydrostatic density and potential temperature at that location
-function density_current(x, z) 
-    hr, ht = hydro_const_theta(z)
-    r = 0.
-    t = 0.
-    u = 0.
-    w = 0.
-    t = t + sample_ellipse_cosine(x,z,-20. ,xlen/2,5000.,4000.,2000.)
-    return r, t, u, w, hr, ht
-end
-
-
-#x and z are input coordinates at which to sample
-#r,u,w,t are output density, u-wind, w-wind, and potential temperature at that location
-#hr and ht are output background hydrostatic density and potential temperature at that location
-function turbulence(x , z)
-    hr, ht = hydro_const_theta(z)
-    r = 0.
-    t = 0.
-    u = 0.
-    w = 0.
-    # call random_number(u);
-    # call random_number(w);
-    # u = (u-0.5)*20;
-    # w = (w-0.5)*20;
-    return r, t, u, w, hr, ht
-end
-
-
-#x and z are input coordinates at which to sample
-#r,u,w,t are output density, u-wind, w-wind, and potential temperature at that location
-#hr and ht are output background hydrostatic density and potential temperature at that location
-function mountain_waves(x, z)
-    hr, ht = hydro_const_bvfreq(z, 0.02)
-    r = 0.
-    t = 0.
-    u = 15.
-    w = 0.
-    return r, t, u, w, hr, ht
-end
-
-
-#Rising thermal
-#x and z are input coordinates at which to sample
-#r,u,w,t are output density, u-wind, w-wind, and potential temperature at that location
-#hr and ht are output background hydrostatic density and potential temperature at that location
-function thermal(x, z)
-    hr, ht = hydro_const_theta(z)
-    r = 0.
-    t = 0.
-    u = 0.
-    w = 0.
-    t = t + sample_ellipse_cosine(x,z, 3. ,xlen/2,2000.,2000.,2000.)
-    #println(t)
-    return r, t, u, w, hr, ht
-end
-
-
-#Colliding thermals
-#x and z are input coordinates at which to sample
-#r,u,w,t are output density, u-wind, w-wind, and potential temperature at that location
-#hr and ht are output background hydrostatic density and potential temperature at that location
-function collision!(x, z, r, u, w, t, hr, ht)
-    hr, ht = hydro_const_theta!(z)
-    r = 0.
-    t = 0.
-    u = 0.
-    w = 0.
-    t = t + sample_ellipse_cosine(x,z, 20.,xlen/2,2000.,2000.,2000.)
-    t = t + sample_ellipse_cosine(x,z,-20.,xlen/2,8000.,2000.,2000.)
-end
-
-
-#Establish hydrostatic balance using constant potential temperature (thermally neutral atmosphere)
-#z is the input coordinate
-#r and t are the output background hydrostatic density and potential temperature
-function hydro_const_theta(z)
-    theta0 = 300.  #Background potential temperature
-    exner0 = 1.    #Surface-level Exner pressure
-    #Establish hydrostatic balance first using Exner pressure
-    ht = theta0                                  #Potential Temperature at z
-    exner = exner0 - grav * z / (cp * theta0)   #Exner pressure at z
-    p = p0 * exner^(cp/rd)                 #Pressure at z
-    rt = (p / C0)^(1. / gamma)              #rho*theta at z
-    hr = rt / ht                                  #Density at z
-    return hr, ht
-end
-
-#Establish hydrstatic balance using constant Brunt-Vaisala frequency
-#z is the input coordinate
-#bv_freq0 is the constant Brunt-Vaisala frequency
-#r and t are the output background hydrostatic density and potential temperature
-function hydro_const_bvfreq(z, bv_freq0)
-    theta0 = 300.  #Background potential temperature
-    exner0 = 1.    #Surface-level Exner pressure
-    ht = theta0 * exp(bv_freq0*bv_freq0 / grav * z)                                    #Pot temp at z
-    exner = exner0 - grav*grav / (cp * bv_freq0*bv_freq0) * (ht - theta0) / (ht * theta0) #Exner pressure at z
-    p = p0 * exner^(cp/rd)                                                         #Pressure at z
-    rt = (p / C0)^(1. / gamma)                                                  #rho*theta at z
-    hr = rt / ht      
-    return hr, ht                                                                    #Density at z
-end
-
-
-#Sample from an ellipse of a specified center, radius, and amplitude at a specified location
-#x and z are input coordinates
-#amp,x0,z0,xrad,zrad are input amplitude, center, and radius of the ellipse
-function sample_ellipse_cosine(x, z, amp, x0, z0, xrad, zrad)
-    #Compute distance from bubble center
-    dist = sqrt( ((x-x0)/xrad)*((x-x0)/xrad) + ((z-z0)/zrad)*((z-z0)/zrad) ) * pi / 2.
-    #If the distance from bubble center is less than the radius, create a cos**2 profile
-    if dist <= pi / 2.
-        return amp * cos(dist)^2.
+    if !isinteractive()
+       config = parse_commandline()
+       println(typeof(config))
     else 
-        return 0.
+        config = Dict(
+            "nx_glob" => 100,
+            "nz_glob" => 50,
+            "sim_time" => 1000,
+            "output" => 10,
+            "data_spec_int" => Int(DATA_SPEC_THERMAL)
+            )
     end
+
+    println("Parsed args:")
+    for (arg,val) in config
+        println("  $arg  =>  $val")
+    end
+
+    model, grid = init(config)
+    #init(config);
+    #println(model)
+
+    mass, te = reductions(model, grid)
+    println("mass = $mass, te = $te")
 end
 
 

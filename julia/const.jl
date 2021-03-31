@@ -33,21 +33,3 @@ DIR_Z = 2              #Integer constant to express that this operation is in th
     DATA_SPEC_INJECTION       = 6
 end
 
-mutable struct Model
-    state::Array{Float64,3}             
-    state_tmp::Array{Float64,3}         
-    flux::Array{Float64,3}              
-    tend::Array{Float64,3}              
-    hy_dens_cell::Vector{Float64}       
-    hy_dens_theta_cell::Vector{Float64} 
-    hy_dens_int::Vector{Float64}        
-    hy_dens_theta_int::Vector{Float64}  
-    hy_pressure_int::Vector{Float64}
-end
-
-struct Grid
-    nx::Int64
-    nz::Int64
-    dx::Int64
-    dz::Int64
-end
