@@ -37,7 +37,7 @@ function main()
             "sim_time" => 1000,
             "output" => 10,
             "data_spec_int" => Int(DATA_SPEC_THERMAL)
-            );
+            )
     end
 
     println("Parsed args:")
@@ -45,11 +45,47 @@ function main()
         println("  $arg  =>  $val")
     end
 
-    model = init(config);
+    model, grid = init(config)
     #init(config);
-    println(model)
+    #println(model)
 
+    mass, te = reductions(model, grid)
+    println("mass = $mass, te = $te")
 end
+
+
+#Compute reduced quantities for error checking without resorting to the "ncdiff" tool
+function reductions(model::Model, grid::Grid) 
+  mass = 0.0
+  te   = 0.0
+  nx, nz = grid.nx, grid.nz
+  dx, dz = grid.dx, grid.dz 
+
+  for k = 1:nz
+      for i = 1:nx
+            r  =   model.state[ID_DENS,k,i] + model.hy_dens_cell[k]       # Density
+            u  =   model.state[ID_UMOM,k,i] / r                           # U-wind
+            w  =   model.state[ID_WMOM,k,i] / r                           # W-wind
+            th = (model.state[ID_RHOT, k,i] + model.hy_dens_theta_cell[k]) / r # Potential Temperature (theta)
+            p  = C0*(r*th)^gamma      # Pressure
+            t  = th / (p0/p)^(rd/cp)  # Temperature
+            ke = r*(u*u+w*w)           # Kinetic Energy
+            ie = r*cv*t                # Internal Energy
+            mass = mass + r            *dx*dz # Accumulate domain mass
+            te   = te   + (ke + r*cv*t)*dx*dz # Accumulate domain total energy
+            #println(r, u, w, th)
+        end
+    end 
+
+#    double glob[2], loc[2];
+#    loc[0] = mass;
+#    loc[1] = te;
+#    int ierr = MPI_Allreduce(loc,glob,2,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD);
+#    mass = glob[0];
+#    te   = glob[1];
+    return mass, te
+end
+
 
 function init(config) 
 
@@ -59,7 +95,6 @@ function init(config)
     #Set the cell grid size
     dx = xlen / config["nx_glob"]
     dz = zlen / config["nz_glob"]
-
     ##############################/
     # BEGIN MPI DUMMY SECTION
     # TODO: (1) GET NUMBER OF MPI RANKS
