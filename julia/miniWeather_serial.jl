@@ -112,7 +112,7 @@ function init(config)
     #######################
     # END MPI DUMMY SECTION
     #######################
-
+    println("num_vars = $NUM_VARS")
     #Vertical direction isn't MPI-ized, so the rank's local values = the global values
     k_beg = 0
     nz = config["nz_glob"]
@@ -129,8 +129,10 @@ function init(config)
         zeros(nz+2*hs),
         zeros(nz+1),
         zeros(nz+1),
-        zeros(nz+1)
+        zeros(nz+1),
     )
+
+    grid = Grid(nx, nz, dx, dz)
 
     #Define the maximum stable time step based on an assumed maximum wind speed
     dt = min(dx,dz) / max_speed * cfl

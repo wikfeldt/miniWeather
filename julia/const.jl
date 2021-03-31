@@ -5,14 +5,14 @@ cv        = 717.0                              #Specific heat of dry air at cons
 rd        = 287.0                              #Dry air constant for equation of state (P=rho*rd*T)
 p0        = 1.e5                              #Standard pressure at the surface in Pascals
 C0        = 27.5629410929725921310572974482   #Constant to translate potential temperature into pressure (P=C0*(rho*theta)**gamma)
-gamm      = 1.40027894002789400278940027894   #gamma=cp/Rd , have to call this gamm because "gamma" is taken (I hate C so much)
+gamma     = 1.40027894002789400278940027894   #gamma=cp/Rd 
 #Define domain and stability-related constants
 xlen      = 2.e4    #Length of the domain in the x-direction (meters)
 zlen      = 1.e4    #Length of the domain in the z-direction (meters)
 hv_beta   = 0.25     #How strong to diffuse the solution: hv_beta \in [0:1]
 cfl       = 1.50    #"Courant, Friedrichs, Lewy" number (for numerical stability)
 max_speed = 450        #Assumed maximum wave speed during the simulation (speed of sound + speed of wind) (meter / sec)
-hs        = 2          #"Halo" size: number of cells beyond the MPI tasks's domain needed for a full "stencil" of information for reconstruction
+hs        = 0          #"Halo" size: number of cells beyond the MPI tasks's domain needed for a full "stencil" of information for reconstruction
 sten_size = 4          #Size of the stencil used for interpolation
 
 #Parameters for indexing and flags
@@ -43,4 +43,11 @@ mutable struct Model
     hy_dens_int::Vector{Float64}        
     hy_dens_theta_int::Vector{Float64}  
     hy_pressure_int::Vector{Float64}
+end
+
+struct Grid
+    nx::Int64
+    nz::Int64
+    dx::Int64
+    dz::Int64
 end
