@@ -54,10 +54,10 @@ function semi_discrete_step(model, grid, dir, mode)
         #Set the halo values for this MPI task's fluid state in the x-direction
         if mode==1
           set_halo_values_x(model.state)
-          model.flux, model.tend = compute_tendencies_x(model.state, grid)
+          model.flux, model.tend = compute_tendencies_x(model.state, model.hy_dens_cell, model.hy_dens_theta_cell, grid)
         elseif mode==2 || mode==3 
           set_halo_values_x(model.state_tmp)
-          model.flux, model.tend = compute_tendencies_x(model.state_tmp, grid)
+          model.flux, model.tend = compute_tendencies_x(model.state_tmp, model.hy_dens_cell, model.hy_dens_theta_cell, grid)
         else
           throw(ArgumentError("mode must be either 1, 2 or 3"))
         end        
@@ -66,10 +66,10 @@ function semi_discrete_step(model, grid, dir, mode)
         #Set the halo values for this MPI task's fluid state in the z-direction
         if mode==1
           set_halo_values_z(model.state)
-          model.flux, model.tend = compute_tendencies_z(model.state, grid)
+          model.flux, model.tend = compute_tendencies_z(model.state, model.hy_dens_int, model.hy_dens_theta_int, model.hy_pressure_int, grid)
         elseif mode==2 || mode==3 
           set_halo_values_z(model.state_tmp)
-          model.flux, model.tend = compute_tendencies_z(model.state_tmp, grid)
+          model.flux, model.tend = compute_tendencies_z(model.state_tmp, model.hy_dens_int, model.hy_dens_theta_int, model.hy_pressure_int, grid)
         else
           throw(ArgumentError("mode must be either 1, 2 or 3"))
         end    
@@ -90,7 +90,7 @@ function semi_discrete_step(model, grid, dir, mode)
             end
         end
     end
-    if mode==1 || mode=2
+    if mode==1 || mode==2
         model.state_tmp = state_out
     elseif mode==3 
       model.state = state_out
@@ -104,7 +104,7 @@ end
 #Since the halos are set in a separate routine, this will not require MPI
 #First, compute the flux vector at each cell interface in the x-direction (including hyperviscosity)
 #Then, compute the tendencies using those fluxes
-function compute_tendencies_x(state, grid)
+function compute_tendencies_x(state, hy_dens_cell, hy_dens_theta_cell, grid)
     flux = zeros(grid.nx + 1, grid.nz + 1, NUM_VARS)
     tend = zeros(grid.nx, grid.nz, NUM_VARS)
     d3_vals = zeros(NUM_VALS)
@@ -112,6 +112,7 @@ function compute_tendencies_x(state, grid)
     stencil = zeros(4)
     #Compute the hyperviscosity coeficient
     hv_coef = -hv_beta * grid.dx / (16 * grid.dt)
+
     #################################################
     ## TODO: THREAD ME
     #################################################
@@ -165,7 +166,7 @@ end
 #Since the halos are set in a separate routine, this will not require MPI
 #First, compute the flux vector at each cell interface in the z-direction (including hyperviscosity)
 #Then, compute the tendencies using those fluxes
-function compute_tendencies_z(state, grid)
+function compute_tendencies_z(state, hy_dens_int, hy_dens_theta_int, hy_pressure_int, grid)
   flux = zeros(grid.nx + 1, grid.nz + 1, NUM_VARS)
   tend = zeros(grid.nx, grid.nz, NUM_VARS)
   d3_vals = zeros(NUM_VALS)
