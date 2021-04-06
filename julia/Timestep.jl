@@ -1,112 +1,149 @@
-
-  #Performs a single dimensionally split time step using a simple low-storate three-stage Runge-Kutta time integrator
-  #The dimensional splitting is a second-order-accurate alternating Strang splitting in which the
-  #order of directions is alternated each time step.
-  #The Runge-Kutta method used here is defined as follows:
-  # q*     = q[n] + dt/3 * rhs(q[n])
-  # q**    = q[n] + dt/2 * rhs(q*  )
-  # q[n+1] = q[n] + dt/1 * rhs(q** )
-  function perform_timestep!(model::Model,grid::Grid, direction_switch)
-    if (direction_switch) then
-      #x-direction first
-      model.state_tmp, model.flux, model.tend = semi_discrete_step(model.state, model.state     ,  grid.dt / 3 , DIR_X)
-      model.state_tmp, model.flux, model.tend = semi_discrete_step(model.state, model.state_tmp ,  grid.dt / 2 , DIR_X)
-      model.state, model.flux, model.tend =  semi_discrete_step(model.state, model.state_tmp ,  grid.dt / 1 , DIR_X)
-      #z-direction second
-      model.state_tmp, model.flux, model.tend = semi_discrete_step(model.state, model.state    , grid.dt / 3 , DIR_Z)
-      model.state_tmp, model.flux, model.tend = semi_discrete_step(model.state, model.state_tmp, grid.dt / 2 , DIR_Z)
-      model.state, model.flux, model.tend = semi_discrete_step(model.state, model.state_tmp    , grid.dt / 1 , DIR_Z)
+include("Initialize.jl")
+using .Initialize: init, Model, Grid
+#Performs a single dimensionally split time step using a simple low-storate three-stage Runge-Kutta time integrator
+#The dimensional splitting is a second-order-accurate alternating Strang splitting in which the
+#order of directions is alternated each time step.
+#The Runge-Kutta method used here is defined as follows:
+# q*     = q[n] + dt/3 * rhs(q[n])
+# q^    = q[n] + dt/2 * rhs(q*  )
+# q[n+1] = q[n] + dt/1 * rhs(q^ )
+function perform_timestep!(model::Model, grid::Grid, direction_switch)
+    if (direction_switch)        
+        #x-direction first
+        model.state_tmp, model.flux, model.tend =
+            semi_discrete_step(model.state, model.state, grid.dt / 3, DIR_X)
+        model.state_tmp, model.flux, model.tend =
+            semi_discrete_step(model.state, model.state_tmp, grid.dt / 2, DIR_X)
+        model.state, model.flux, model.tend =
+            semi_discrete_step(model.state, model.state_tmp, grid.dt / 1, DIR_X)
+        #z-direction second
+        model.state_tmp, model.flux, model.tend =
+            semi_discrete_step(model.state, model.state, grid.dt / 3, DIR_Z)
+        model.state_tmp, model.flux, model.tend =
+            semi_discrete_step(model.state, model.state_tmp, grid.dt / 2, DIR_Z)
+        model.state, model.flux, model.tend =
+            semi_discrete_step(model.state, model.state_tmp, grid.dt / 1, DIR_Z)
     else
-      #z-direction second
-      model.state_tmp, model.flux, model.tend = semi_discrete_step(model.state, model.state, grid.dt / 3, DIR_Z)
-      model.state_tmp, model.flux, model.tend = semi_discrete_step(model.state, model.state_tmp,  grid.dt / 2, DIR_Z)
-      model.state, model.flux, model.tend = semi_discrete_step(model.state, model.state_tmp    , grid.dt / 1, DIR_Z)
-      #x-direction first
-      model.state_tmp, model.flux, model.tend = semi_discrete_step(model.state, model.state    , grid.dt / 3, DIR_X)
-      model.state_tmp, model.flux, model.tend = semi_discrete_step(model.state, model.state_tmp, grid.dt / 2, DIR_X)
-      model.state, model.flux, model.tend =     semi_discrete_step(model.state, model.state_tmp, grid.dt / 1, DIR_X)
+        #z-direction second
+        model.state_tmp, model.flux, model.tend =
+            semi_discrete_step(model.state, model.state, grid.dt / 3, DIR_Z)
+        model.state_tmp, model.flux, model.tend =
+            semi_discrete_step(model.state, model.state_tmp, grid.dt / 2, DIR_Z)
+        model.state, model.flux, model.tend =
+            semi_discrete_step(model.state, model.state_tmp, grid.dt / 1, DIR_Z)
+        #x-direction first
+        model.state_tmp, model.flux, model.tend =
+            semi_discrete_step(model.state, model.state, grid.dt / 3, DIR_X)
+        model.state_tmp, model.flux, model.tend =
+            semi_discrete_step(model.state, model.state_tmp, grid.dt / 2, DIR_X)
+        model.state, model.flux, model.tend =
+            semi_discrete_step(model.state, model.state_tmp, grid.dt / 1, DIR_X)
     end
     return !direction_switch
-  end 
+end
 
 
-  #Perform a single semi-discretized step in time with the form:
-  #state_out = state_init + dt * rhs(state_forcing)
-  #Meaning the step starts from state_init, computes the rhs using state_forcing, and stores the result in state_out
-  function semi_discrete_step(state_init , state_forcing , grid , dir)
-    state_out = zeros(1:grid.nx+2*hs,1:grid.nz+2*hs,NUM_VARS)
-    flux = zeros(1:grid.nx+1,1:grid.nz+1,NUM_VARS)
-    tend = zeros(1:grid.nx,1:grid.nz,NUM_VARS)
-
+#Perform a single semi-discretized step in time with the form:
+#state_out = state_init + dt * rhs(state_forcing)
+#Meaning the step starts from state_init, computes the rhs using state_forcing, and stores the result in state_out
+function semi_discrete_step(model, grid, dir, mode)
+    # mode=1 sets model.state=state_init & state_forcing and model.state_tmp=state_out
+    # mode=2 sets model.state=initial-state and model.state_tmp=state_forcing & state_out
+    # mode=3 sets model.state=initial state & state_out and model.state_tmp=state_forcing      
     if dir == DIR_X
-      #Set the halo values for this MPI task's fluid state in the x-direction
-      set_halo_values_x(state_forcing)
-      #Compute the time tendencies for the fluid state in the x-direction
-      flux, tend = compute_tendencies_x(state_forcing, grid)
+        #Set the halo values for this MPI task's fluid state in the x-direction
+        if mode==1
+          set_halo_values_x(model.state)
+          model.flux, model.tend = compute_tendencies_x(model.state, grid)
+        elseif mode==2 || mode==3 
+          set_halo_values_x(model.state_tmp)
+          model.flux, model.tend = compute_tendencies_x(model.state_tmp, grid)
+        else
+          throw(ArgumentError("mode must be either 1, 2 or 3"))
+        end        
+          #Compute the time tendencies for the fluid state in the x-direction
     elseif dir == DIR_Z
-      #Set the halo values for this MPI task's fluid state in the z-direction
-      set_halo_values_z(state_forcing)
-      #Compute the time tendencies for the fluid state in the z-direction
-      flux, tend = compute_tendencies_z(state_forcing, grid)
-    end
+        #Set the halo values for this MPI task's fluid state in the z-direction
+        if mode==1
+          set_halo_values_z(model.state)
+          model.flux, model.tend = compute_tendencies_z(model.state, grid)
+        elseif mode==2 || mode==3 
+          set_halo_values_z(model.state_tmp)
+          model.flux, model.tend = compute_tendencies_z(model.state_tmp, grid)
+        else
+          throw(ArgumentError("mode must be either 1, 2 or 3"))
+        end    
+        #Compute the time tendencies for the fluid state in the z-direction
+      else
+        throw(ArgumentError("dir must be either $DIR_X or $DIR_Z"))
+      end
 
     #################################################
     ## TODO: THREAD ME
     #################################################
     #Apply the tendencies to the fluid state
+    state_out = zeros(size(model.state))
     for ll = 1:NUM_VARS
-      for k = 1:grid.nz
-        for i = 1:grid.nx
-          state_out[i,k,ll] = state_init[i,k,ll] + grid.dt * tend[i,k,ll]
+        for k = 1:grid.nz
+            for i = 1:grid.nx
+                state_out[i, k, ll] = model.state[i, k, ll] + grid.dt * model.tend[i, k, ll]
+            end
         end
-      end
     end
-    return state_out, state_forcing, flux, tend
-  end 
+    if mode==1 || mode=2
+        model.state_tmp = state_out
+    elseif mode==3 
+      model.state = state_out
+    else
+      throw(ArgumentError("mode must be either 1, 2 or 3"))
+    end  
+end
 
 
-  #Compute the time tendencies of the fluid state using forcing in the x-direction
-  #Since the halos are set in a separate routine, this will not require MPI
-  #First, compute the flux vector at each cell interface in the x-direction (including hyperviscosity)
-  #Then, compute the tendencies using those fluxes
-  function compute_tendencies_x(state, grid)
-    flux = zeros(grid.nx+1, grid.nz+1, NUM_VARS)
+#Compute the time tendencies of the fluid state using forcing in the x-direction
+#Since the halos are set in a separate routine, this will not require MPI
+#First, compute the flux vector at each cell interface in the x-direction (including hyperviscosity)
+#Then, compute the tendencies using those fluxes
+function compute_tendencies_x(state, grid)
+    flux = zeros(grid.nx + 1, grid.nz + 1, NUM_VARS)
     tend = zeros(grid.nx, grid.nz, NUM_VARS)
     d3_vals = zeros(NUM_VALS)
     vals = zeros(NUM_VARS)
     stencil = zeros(4)
     #Compute the hyperviscosity coeficient
-    hv_coef = -hv_beta * grid.dx / (16*grid.dt)
+    hv_coef = -hv_beta * grid.dx / (16 * grid.dt)
     #################################################
     ## TODO: THREAD ME
     #################################################
     #Compute fluxes in the x-direction for each cell
     for k = 1:grid.nz
-      for i = 1:grid.nx+1
-        #Use fourth-order interpolation from four cell averages to compute the value at the interface in question
-        for ll = 1:NUM_VARS
-          for s = 1:sten_size
-            stencil[s] = state[i-hs-1+s,k,ll]
-          end
-          #Fourth-order-accurate interpolation of the state
-          vals[ll] = -stencil[1]/12 + 7*stencil[2]/12 + 7*stencil[3]/12 - stencil[4]/12
-          #First-order-accurate interpolation of the third spatial derivative of the state (for artificial viscosity)
-          d3_vals[ll] = -stencil[1] + 3*stencil[2] - 3*stencil[3] + stencil[4]
+        for i = 1:grid.nx+1
+            #Use fourth-order interpolation from four cell averages to compute the value at the interface in question
+            for ll = 1:NUM_VARS
+                for s = 1:sten_size
+                    stencil[s] = state[i-hs-1+s, k, ll]
+                end
+                #Fourth-order-accurate interpolation of the state
+                vals[ll] =
+                    -stencil[1] / 12 + 7 * stencil[2] / 12 + 7 * stencil[3] / 12 -
+                    stencil[4] / 12
+                #First-order-accurate interpolation of the third spatial derivative of the state (for artificial viscosity)
+                d3_vals[ll] = -stencil[1] + 3 * stencil[2] - 3 * stencil[3] + stencil[4]
+            end
+
+            #Compute density, u-wind, w-wind, potential temperature, and pressure (r,u,w,t,p respectively)
+            r = vals[ID_DENS] + hy_dens_cell[k]
+            u = vals[ID_UMOM] / r
+            w = vals[ID_WMOM] / r
+            t = (vals[ID_RHOT] + hy_dens_theta_cell[k]) / r
+            p = C0 * (r * t)^gamma
+
+            #Compute the flux vector
+            flux[i, k, ID_DENS] = r * u - hv_coef * d3_vals[ID_DENS]
+            flux[i, k, ID_UMOM] = r * u * u + p - hv_coef * d3_vals[ID_UMOM]
+            flux[i, k, ID_WMOM] = r * u * w - hv_coef * d3_vals[ID_WMOM]
+            flux[i, k, ID_RHOT] = r * u * t - hv_coef * d3_vals[ID_RHOT]
         end
-
-        #Compute density, u-wind, w-wind, potential temperature, and pressure (r,u,w,t,p respectively)
-        r = vals[ID_DENS] + hy_dens_cell[k]
-        u = vals[ID_UMOM] / r
-        w = vals[ID_WMOM] / r
-        t = ( vals[ID_RHOT] + hy_dens_theta_cell[k] ) / r
-        p = C0*(r*t)**gamma
-
-        #Compute the flux vector
-        flux[i,k,ID_DENS] = r*u     - hv_coef*d3_vals[ID_DENS]
-        flux[i,k,ID_UMOM] = r*u*u+p - hv_coef*d3_vals[ID_UMOM]
-        flux[i,k,ID_WMOM] = r*u*w   - hv_coef*d3_vals[ID_WMOM]
-        flux[i,k,ID_RHOT] = r*u*t   - hv_coef*d3_vals[ID_RHOT]
-      end
     end
 
     ######
@@ -114,63 +151,65 @@
     #####
     #Use the fluxes to compute tendencies for each cell
     for ll = 1:NUM_VARS
-      for k = 1:grid.nz
-        for i = 1:grid.nx
-          tend[i,k,ll] = -( flux[i+1,k,ll] - flux[i,k,ll] ) / grid.dx
+        for k = 1:grid.nz
+            for i = 1:grid.nx
+                tend[i, k, ll] = -(flux[i+1, k, ll] - flux[i, k, ll]) / grid.dx
+            end
         end
-      end
     end
     return flux, tend
-  end 
+end
 
 
-  #Compute the time tendencies of the fluid state using forcing in the z-direction
-  #Since the halos are set in a separate routine, this will not require MPI
-  #First, compute the flux vector at each cell interface in the z-direction (including hyperviscosity)
-  #Then, compute the tendencies using those fluxes
-  function compute_tendencies_z(state,grid)
-    real(rp), intent(in   ) :: state(1-hs:nx+hs,1-hs:nz+hs,NUM_VARS)
-    real(rp), intent(  out) :: flux (nx+1,nz+1,NUM_VARS)
-    real(rp), intent(  out) :: tend (nx,nz,NUM_VARS)
-    integer :: i,k,ll,s
-    real(rp) :: r,u,w,t,p, stencil(4), d3_vals(NUM_VARS), vals(NUM_VARS), hv_coef
-    #Compute the hyperviscosity coeficient
-    hv_coef = -hv_beta * dz / (16*dt)
+#Compute the time tendencies of the fluid state using forcing in the z-direction
+#Since the halos are set in a separate routine, this will not require MPI
+#First, compute the flux vector at each cell interface in the z-direction (including hyperviscosity)
+#Then, compute the tendencies using those fluxes
+function compute_tendencies_z(state, grid)
+  flux = zeros(grid.nx + 1, grid.nz + 1, NUM_VARS)
+  tend = zeros(grid.nx, grid.nz, NUM_VARS)
+  d3_vals = zeros(NUM_VALS)
+  vals = zeros(NUM_VARS)
+  stencil = zeros(4)
+  #Compute the hyperviscosity coeficient
+    hv_coef = -hv_beta * dz / (16 * dt)
     ####
     ## TODO: THREAD ME
     ####
     #Compute fluxes in the x-direction for each cell
-    for k = 1:nz+1
-      for i = 1:nx
-        #Use fourth-order interpolation from four cell averages to compute the value at the interface in question
-        for ll = 1:NUM_VARS
-          for s = 1:sten_size
-            stencil[s] = state[i,k-hs-1+s,ll]
-          end
-          #Fourth-order-accurate interpolation of the state
-          vals[ll] = -stencil[1]/12 + 7*stencil[2]/12 + 7*stencil[3]/12 - stencil[4]/12
-          #First-order-accurate interpolation of the third spatial derivative of the state
-          d3_vals[ll] = -stencil[1] + 3*stencil[2] - 3*stencil[3] + stencil[4]
-        end
+    for k = 1:grid.nz+1
+        for i = 1:grid.nx
+            #Use fourth-order interpolation from four cell averages to compute the value at the interface in question
+            for ll = 1:NUM_VARS
+                for s = 1:sten_size
+                    stencil[s] = state[i, k-hs-1+s, ll]
+                end
+                #Fourth-order-accurate interpolation of the state
+                vals[ll] =
+                    -stencil[1] / 12 + 7 * stencil[2] / 12 + 7 * stencil[3] / 12 -
+                    stencil[4] / 12
+                #First-order-accurate interpolation of the third spatial derivative of the state
+                d3_vals[ll] = -stencil[1] + 3 * stencil[2] - 3 * stencil[3] + stencil[4]
+            end
 
-        #Compute density, u-wind, w-wind, potential temperature, and pressure (r,u,w,t,p respectively)
-        r = vals[ID_DENS] + hy_dens_int[k)]
-        u = vals[ID_UMOM] / r
-        w = vals[ID_WMOM] / r
-        t = ( vals(ID_RHOT) + hy_dens_theta_int[k] ) / r
-        p = C0*(r*t)**gamma - hy_pressure_int[k]
-        #Enforce vertical boundary condition and exact mass conservation
-        if k == 1 || k == nz+1
-          w                = 0
-          d3_vals[ID_DENS] = 0
-        end
+            #Compute density, u-wind, w-wind, potential temperature, and pressure (r,u,w,t,p respectively)
+            r = vals[ID_DENS] + hy_dens_int[k]
+            u = vals[ID_UMOM] / r
+            w = vals[ID_WMOM] / r
+            t = (vals(ID_RHOT) + hy_dens_theta_int[k]) / r
+            p = C0 * (r * t)^gamma - hy_pressure_int[k]
+            #Enforce vertical boundary condition and exact mass conservation
+            if k == 1 || k == nz + 1
+                w = 0
+                d3_vals[ID_DENS] = 0
+            end
 
-        #Compute the flux vector with hyperviscosity
-        flux[i,k,ID_DENS] = r*w     - hv_coef*d3_vals[ID_DENS]
-        flux[i,k,ID_UMOM] = r*w*u   - hv_coef*d3_vals[ID_UMOM]
-        flux[i,k,ID_WMOM] = r*w*w+p - hv_coef*d3_vals[ID_WMOM]
-        flux[i,k,ID_RHOT] = r*w*t   - hv_coef*d3_vals[ID_RHOT]
-      end
+            #Compute the flux vector with hyperviscosity
+            flux[i, k, ID_DENS] = r * w - hv_coef * d3_vals[ID_DENS]
+            flux[i, k, ID_UMOM] = r * w * u - hv_coef * d3_vals[ID_UMOM]
+            flux[i, k, ID_WMOM] = r * w * w + p - hv_coef * d3_vals[ID_WMOM]
+            flux[i, k, ID_RHOT] = r * w * t - hv_coef * d3_vals[ID_RHOT]
+        end
     end
 
     ####
@@ -178,15 +217,94 @@
     ####
     #Use the fluxes to compute tendencies for each cell
     for ll = 1:NUM_VARS
-      for k = 1:nz
-        for i = 1:nx
-          tend[i,k,ll] = -( flux[i,k+1,ll] - flux[i,k,ll] ) / dz
-          if ll == ID_WMOM
-            tend[i,k,ID_WMOM] = tend[i,k,ID_WMOM] - state[i,k,ID_DENS]*grav
-          end
+        for k = 1:nz
+            for i = 1:nx
+                tend[i, k, ll] = -(flux[i, k+1, ll] - flux[i, k, ll]) / dz
+                if ll == ID_WMOM
+                    tend[i, k, ID_WMOM] = tend[i, k, ID_WMOM] - state[i, k, ID_DENS] * grav
+                end
+            end
         end
-      end
     end
     return flux, tend
-  end 
+end
 
+
+
+#Set this MPI task's halo values in the x-direction. This routine will require MPI
+function set_halo_values_x(state)
+    #real(rp), intent(inout) :: state(1-hs:nx+hs,1-hs:nz+hs,NUM_VARS)
+    ###
+    # TODO: EXCHANGE HALO VALUES WITH NEIGHBORING MPI TASKS
+    # (1) give    state(1:hs,1:nz,1:NUM_VARS)       to   my left  neighbor
+    # (2) receive state(1-hs:0,1:nz,1:NUM_VARS)     from my left  neighbor
+    # (3) give    state(nx-hs+1:nx,1:nz,1:NUM_VARS) to   my right neighbor
+    # (4) receive state(nx+1:nx+hs,1:nz,1:NUM_VARS) from my right neighbor
+    ###
+
+    ###
+    # DELETE THE SERIAL CODE BELOW AND REPLACE WITH MPI
+    ###
+    for ll = 1:NUM_VARS
+        for k = 1:nz
+            state[-1, k, ll] = state[nx-1, k, ll]
+            state[0, k, ll] = state[nx, k, ll]
+            state[nx+1, k, ll] = state[1, k, ll]
+            state[nx+2, k, ll] = state[2, k, ll]
+        end
+    end
+    ###
+
+    if (data_spec_int == DATA_SPEC_INJECTION)
+        if (myrank == 0)
+            for k = 1:nz
+                z = (k_beg - 1 + k - 0.5) * dz
+                if (abs(z - 3 * zlen / 4) <= zlen / 16)
+                    state[-1:0, k, ID_UMOM] =
+                        (state[-1:0, k, ID_DENS] + hy_dens_cell[k]) * 50.0
+                    state[-1:0, k, ID_RHOT] =
+                        (state[-1:0, k, ID_DENS] + hy_dens_cell[k]) * 298.0 -
+                        hy_dens_theta_cell[k]
+                end
+            end
+        end
+    end
+end
+
+
+#Set this MPI task's halo values in the z-direction. This does not require MPI because there is no MPI
+#decomposition in the vertical direction
+function set_halo_values_z(state)
+    #real(rp), intent(inout) :: state(1-hs:nx+hs,1-hs:nz+hs,NUM_VARS)
+    mnt_width = xlen / 8
+    ###
+    # TODO: THREAD ME
+    ###
+    for ll = 1:NUM_VARS
+        for i = 1-hs:nx+hs
+            if (ll == ID_WMOM)
+                state[i, -1, ll] = 0
+                state[i, 0, ll] = 0
+                state[i, nz+1, ll] = 0
+                state[i, nz+2, ll] = 0
+                #Impose the vertical momentum effects of an artificial cos^2 mountain at the lower boundary
+                if (data_spec_int == DATA_SPEC_MOUNTAIN)
+                    x = (i_beg - 1 + i - 0.5) * dx
+                    if (abs(x - xlen / 4) < mnt_width)
+                        xloc = (x - (xlen / 4)) / mnt_width
+                        #Compute the derivative of the fake mountain
+                        mnt_deriv = -pi * cos(pi * xloc / 2) * sin(pi * xloc / 2) * 10 / dx
+                        #w = (dz/dx)*u
+                        state[i, -1, ID_WMOM] = mnt_deriv * state[i, 1, ID_UMOM]
+                        state[i, 0, ID_WMOM] = mnt_deriv * state[i, 1, ID_UMOM]
+                    end
+                end
+            else
+                state[i, -1, ll] = state[i, 1, ll]
+                state[i, 0, ll] = state[i, 1, ll]
+                state[i, nz+1, ll] = state[i, nz, ll]
+                state[i, nz+2, ll] = state[i, nz, ll]
+            end
+        end
+    end
+end
