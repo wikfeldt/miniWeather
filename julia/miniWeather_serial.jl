@@ -1,8 +1,10 @@
 using ArgParse
+using NetCDF
 include("const.jl")
 include("Initialize.jl")
-using NetCDF
 using .Initialize: init, Model, Grid
+include("Timestep.jl")
+using .Timestep: perform_timestep!
 
 function parse_commandline()
     s = ArgParseSettings()
@@ -30,7 +32,7 @@ end
 
 
 #Compute reduced quantities for error checking without resorting to the "ncdiff" tool
-function reductions(model::Model, grid::Grid)
+function reductions(model, grid)
     mass = 0.0
     te = 0.0
     nx, nz = grid.nx, grid.nz
@@ -38,10 +40,10 @@ function reductions(model::Model, grid::Grid)
 
     for k = 1:nz
         for i = 1:nx
-            r = model.state[ID_DENS, k, i] + model.hy_dens_cell[k]       # Density
-            u = model.state[ID_UMOM, k, i] / r                           # U-wind
-            w = model.state[ID_WMOM, k, i] / r                           # W-wind
-            th = (model.state[ID_RHOT, k, i] + model.hy_dens_theta_cell[k]) / r # Potential Temperature (theta)
+            r = model.state[i, k, ID_DENS] + model.hy_dens_cell[k]       # Density
+            u = model.state[i, k, ID_UMOM] / r                           # U-wind
+            w = model.state[i, k, ID_WMOM] / r                           # W-wind
+            th = (model.state[i, k, ID_RHOT] + model.hy_dens_theta_cell[k]) / r # Potential Temperature (theta)
             p = C0 * (r * th)^gamma      # Pressure
             t = th / (p0 / p)^(rd / cp)  # Temperature
             ke = r * (u * u + w * w)           # Kinetic Energy
@@ -175,10 +177,14 @@ function main()
     #output(model, etime)
 
     time_counter = 0
+    direction_switch = true
     for i = 1:grid.nt
         if mod(time_counter, config["output_freq"]) == 0
             println(etime)
         end
+
+        perform_timestep!(model, grid, direction_switch)
+        direction_switch = !direction_switch
         etime += grid.dt
         time_counter += 1
     end

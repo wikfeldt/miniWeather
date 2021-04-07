@@ -14,6 +14,7 @@ mutable struct Model
     hy_dens_int::Vector{Float64}
     hy_dens_theta_int::Vector{Float64}
     hy_pressure_int::Vector{Float64}
+    data_spec_int::Int64
 end
 
 struct Grid
@@ -59,15 +60,16 @@ function init(config)
 
     #Allocate the model data
     model = Model(
-        zeros(NUM_VARS, nz + 2 * hs, nx + 2 * hs),
-        zeros(NUM_VARS, nz + 2 * hs, nx + 2 * hs),
-        zeros(NUM_VARS, nz + 1, nx + 1),
-        zeros(NUM_VARS, nz, nx),
+        zeros(nx + 2 * hs, nz + 2 * hs, NUM_VARS),
+        zeros(nx + 2 * hs, nz + 2 * hs, NUM_VARS),
+        zeros(nx + 1, nz + 1, NUM_VARS),
+        zeros(nx, nz, NUM_VARS),
         zeros(nz + 2 * hs),
         zeros(nz + 2 * hs),
         zeros(nz + 1),
         zeros(nz + 1),
         zeros(nz + 1),
+        data_spec_int,
     )
 
     #Define the maximum stable time step based on an assumed maximum wind speed
@@ -134,15 +136,15 @@ function init(config)
                     end
                     #println(r, hr, u, w, ht)
                     #Store into the fluid state array
-                    model.state[ID_DENS, k, i] += r * qweights[ii] * qweights[kk]
-                    model.state[ID_UMOM, k, i] += (r + hr) * u * qweights[ii] * qweights[kk]
-                    model.state[ID_WMOM, k, i] += (r + hr) * w * qweights[ii] * qweights[kk]
-                    model.state[ID_RHOT, k, i] +=
+                    model.state[i, k, ID_DENS] += r * qweights[ii] * qweights[kk]
+                    model.state[i, k, ID_UMOM] += (r + hr) * u * qweights[ii] * qweights[kk]
+                    model.state[i, k, ID_WMOM] += (r + hr) * w * qweights[ii] * qweights[kk]
+                    model.state[i, k, ID_RHOT] +=
                         ((r + hr) * (t + ht) - hr * ht) * qweights[ii] * qweights[kk]
                 end
             end
             for ll = 1:NUM_VARS
-                model.state_tmp[ll, k, i] = model.state[ll, k, i]
+                model.state_tmp[i, k, ll] = model.state[i, k, ll]
             end
         end
     end
