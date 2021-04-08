@@ -60,18 +60,17 @@ function init(config)
 
     #Allocate the model data
     model = Model(
-        zeros(nx + 2 * hs, nz + 2 * hs, NUM_VARS),
-        zeros(nx + 2 * hs, nz + 2 * hs, NUM_VARS),
-        zeros(nx + 1, nz + 1, NUM_VARS),
-        zeros(nx, nz, NUM_VARS),
-        zeros(nz + 2 * hs),
-        zeros(nz + 2 * hs),
-        zeros(nz + 1),
-        zeros(nz + 1),
-        zeros(nz + 1),
-        data_spec_int,
+        zeros(nx + 2 * hs, nz + 2 * hs, NUM_VARS),  # state
+        zeros(nx + 2 * hs, nz + 2 * hs, NUM_VARS),  # state_tmp
+        zeros(nx + 1, nz + 1, NUM_VARS),            # flux
+        zeros(nx, nz, NUM_VARS),                    # tend
+        zeros(nz + 2 * hs),                         # hy_dens_cell
+        zeros(nz + 2 * hs),                         # hy_dens_theta_cell
+        zeros(nz + 1),                              # hy_dens_int
+        zeros(nz + 1),                              # hy_dens_theta_int
+        zeros(nz + 1),                              # hy_pressure_int
+        data_spec_int,                              # data_spec_int
     )
-
     #Define the maximum stable time step based on an assumed maximum wind speed
     dt = min(dx, dz) / max_speed * cfl
     nt = round(config["sim_time"] / dt)
@@ -117,8 +116,8 @@ function init(config)
             for kk = 1:nqpoints
                 for ii = 1:nqpoints
                     #Compute the x,z location within the global domain based on cell and quadrature index
-                    x = (i_beg + i - hs + 0.5) * dx + (qpoints[ii] - 0.5) * dx
-                    z = (k_beg + k - hs + 0.5) * dz + (qpoints[kk] - 0.5) * dz
+                    x = (i_beg + i - 1 - hs + 0.5) * dx + (qpoints[ii] - 0.5) * dx
+                    z = (k_beg + k - 1 - hs + 0.5) * dz + (qpoints[kk] - 0.5) * dz
 
                     #Set the fluid state based on the user's specification
                     if data_spec_int == Int(DATA_SPEC_COLLISION)
@@ -154,7 +153,7 @@ function init(config)
     ########################/
     for k = 1:nz+2*hs
         for kk = 1:nqpoints
-            z = (k_beg + k - hs + 0.5) * dz
+            z = (k_beg + k - 1 - hs + 0.5) * dz
             #Set the fluid state based on the user's specification
             if data_spec_int == Int(DATA_SPEC_COLLISION)
                 r, t, u, w, hr, ht = collision(0.0, z)
@@ -179,7 +178,7 @@ function init(config)
     # TODO: MAKE THIS LOOP A PARALLEL_FOR
     ########################/
     for k = 1:nz+1
-        z = (k_beg + k) * dz
+        z = (k_beg + k - 1) * dz
         if data_spec_int == Int(DATA_SPEC_COLLISION)
             r, t, u, w, hr, ht = collision(0.0, z)
         elseif data_spec_int == Int(DATA_SPEC_THERMAL)

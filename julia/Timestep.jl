@@ -103,7 +103,7 @@ function semi_discrete_step!(model, grid, dir, mode)
     for ll = 1:NUM_VARS
         for k = 1:grid.nz
             for i = 1:grid.nx
-                state_out[i, k, ll] = model.state[i, k, ll] + dt * model.tend[i, k, ll]
+                state_out[i+hs, k+hs, ll] = model.state[i+hs, k+hs, ll] + dt * model.tend[i, k, ll]
             end
         end
     end
@@ -139,7 +139,7 @@ function compute_tendencies_x(state, hy_dens_cell, hy_dens_theta_cell, grid)
             #Use fourth-order interpolation from four cell averages to compute the value at the interface in question
             for ll = 1:NUM_VARS
                 for s = 1:sten_size
-                    stencil[s] = state[i-hs+1+s, k, ll]
+                    stencil[s] = state[i+s-1, k+hs, ll]
                 end
                 #Fourth-order-accurate interpolation of the state
                 vals[ll] =
@@ -150,10 +150,10 @@ function compute_tendencies_x(state, hy_dens_cell, hy_dens_theta_cell, grid)
             end
 
             #Compute density, u-wind, w-wind, potential temperature, and pressure (r,u,w,t,p respectively)
-            r = vals[ID_DENS] + hy_dens_cell[k]
+            r = vals[ID_DENS] + hy_dens_cell[k+hs]
             u = vals[ID_UMOM] / r
             w = vals[ID_WMOM] / r
-            t = (vals[ID_RHOT] + hy_dens_theta_cell[k]) / r
+            t = (vals[ID_RHOT] + hy_dens_theta_cell[k+hs]) / r
             p = C0 * (r * t)^gamma
 
             #Compute the flux vector
@@ -200,7 +200,7 @@ function compute_tendencies_z(state, hy_dens_int, hy_dens_theta_int, hy_pressure
             #Use fourth-order interpolation from four cell averages to compute the value at the interface in question
             for ll = 1:NUM_VARS
                 for s = 1:sten_size
-                    stencil[s] = state[i, k-hs+1+s, ll]
+                    stencil[s] = state[i+hs, k-1+s, ll]
                 end
                 #Fourth-order-accurate interpolation of the state
                 vals[ll] =
@@ -215,6 +215,11 @@ function compute_tendencies_z(state, hy_dens_int, hy_dens_theta_int, hy_pressure
             u = vals[ID_UMOM] / r
             w = vals[ID_WMOM] / r
             t = (vals[ID_RHOT] + hy_dens_theta_int[k]) / r
+            if r*t < 0.0
+              println("k=", k, " vals= ",vals[ID_DENS], vals[ID_RHOT], " hy_dens_thetaint= ", hy_dens_int[k])
+              println("r=$r, t=$t")
+            end
+
             p = C0 * (r * t)^gamma - hy_pressure_int[k]
             #Enforce vertical boundary condition and exact mass conservation
             if k == 1 || k == grid.nz + 1
@@ -239,7 +244,7 @@ function compute_tendencies_z(state, hy_dens_int, hy_dens_theta_int, hy_pressure
             for i = 1:grid.nx
                 tend[i, k, ll] = -(flux[i, k+1, ll] - flux[i, k, ll]) / grid.dz
                 if ll == ID_WMOM
-                    tend[i, k, ID_WMOM] = tend[i, k, ID_WMOM] - state[i, k, ID_DENS] * grav
+                    tend[i, k, ID_WMOM] = tend[i, k, ID_WMOM] - state[i+hs, k+hs, ID_DENS] * grav
                 end
             end
         end
@@ -276,13 +281,15 @@ function set_halo_values_x!(state, hy_dens_cell, hy_dens_theta_cell, grid, data_
     if (data_spec_int == DATA_SPEC_INJECTION)
         #if (myrank == 0)
         for k = 1:grid.nz
+#            for i = 1:hs
             z = (k_beg - 1 + k - 0.5) * grid.dz
             if (abs(z - 3 * zlen / 4) <= zlen / 16)
-                state[1:2, k, ID_UMOM] = (state[1:2, k, ID_DENS] + hy_dens_cell[k]) * 50.0
+                state[1:2, k, ID_UMOM] = (state[1:2, k, ID_DENS] + hy_dens_cell[k+hs]) * 50.0
                 state[1:2, k, ID_RHOT] =
-                    (state[1:2, k, ID_DENS] + hy_dens_cell[k]) * 298.0 -
-                    hy_dens_theta_cell[k]
-            end
+                    (state[1:2, k, ID_DENS] + hy_dens_cell[k+hs]) * 298.0 -
+                    hy_dens_theta_cell[k+hs]
+              end
+ #           end
         end
         #end
     end
@@ -312,8 +319,8 @@ function set_halo_values_z!(state, grid, data_spec_int)
                         #Compute the derivative of the fake mountain
                         mnt_deriv = -pi * cos(pi * xloc / 2) * sin(pi * xloc / 2) * 10 / grid.dx
                         #w = (dz/dx)*u
-                        state[i, -1, ID_WMOM] = mnt_deriv * state[i, 1, ID_UMOM]
-                        state[i, 0, ID_WMOM] = mnt_deriv * state[i, 1, ID_UMOM]
+                        state[i, 1, ID_WMOM] = mnt_deriv * state[i, 3, ID_UMOM]
+                        state[i, 2, ID_WMOM] = mnt_deriv * state[i, 3, ID_UMOM]
                     end
                 end
             else
