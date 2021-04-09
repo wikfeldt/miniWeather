@@ -49,16 +49,20 @@ function semi_discrete_step!(model, grid, dir, mode)
         #Set the halo values for this MPI task's fluid state in the x-direction
         if mode == 1
             set_halo_values_x!(model.state, model.hy_dens_cell, model.hy_dens_theta_cell, grid, model.data_spec_int)
-            model.flux, model.tend = compute_tendencies_x(
+            compute_tendencies_x!(
                 model.state,
+                model.flux,
+                model.tend,
                 model.hy_dens_cell,
                 model.hy_dens_theta_cell,
                 grid,
             )
         elseif mode == 2 || mode == 3
             set_halo_values_x!(model.state_tmp, model.hy_dens_cell, model.hy_dens_theta_cell, grid, model.data_spec_int)
-            model.flux, model.tend = compute_tendencies_x(
+            compute_tendencies_x!(
                 model.state_tmp,
+                model.flux,
+                model.tend,
                 model.hy_dens_cell,
                 model.hy_dens_theta_cell,
                 grid,
@@ -71,8 +75,10 @@ function semi_discrete_step!(model, grid, dir, mode)
         #Set the halo values for this MPI task's fluid state in the z-direction
         if mode == 1
             set_halo_values_z!(model.state, grid, model.data_spec_int)
-            model.flux, model.tend = compute_tendencies_z(
+            compute_tendencies_z!(
                 model.state,
+                model.flux,
+                model.tend,
                 model.hy_dens_int,
                 model.hy_dens_theta_int,
                 model.hy_pressure_int,
@@ -80,8 +86,10 @@ function semi_discrete_step!(model, grid, dir, mode)
             )
         elseif mode == 2 || mode == 3
             set_halo_values_z!(model.state_tmp, grid, model.data_spec_int)
-            model.flux, model.tend = compute_tendencies_z(
+            compute_tendencies_z!(
                 model.state_tmp,
+                model.flux,
+                model.tend,
                 model.hy_dens_int,
                 model.hy_dens_theta_int,
                 model.hy_pressure_int,
@@ -121,9 +129,9 @@ end
 #Since the halos are set in a separate routine, this will not require MPI
 #First, compute the flux vector at each cell interface in the x-direction (including hyperviscosity)
 #Then, compute the tendencies using those fluxes
-function compute_tendencies_x(state, hy_dens_cell, hy_dens_theta_cell, grid)
-    flux = zeros(grid.nx + 1, grid.nz + 1, NUM_VARS)
-    tend = zeros(grid.nx, grid.nz, NUM_VARS)
+function compute_tendencies_x!(state, flux, tend, hy_dens_cell, hy_dens_theta_cell, grid)
+#    flux = zeros(grid.nx + 1, grid.nz + 1, NUM_VARS)
+#    tend = zeros(grid.nx, grid.nz, NUM_VARS)
     d3_vals = zeros(NUM_VARS)
     vals = zeros(NUM_VARS)
     stencil = zeros(4)
@@ -134,7 +142,7 @@ function compute_tendencies_x(state, hy_dens_cell, hy_dens_theta_cell, grid)
     ## TODO: THREAD ME
     #################################################
     #Compute fluxes in the x-direction for each cell
-    for k = 1:grid.nz
+     for k = 1:grid.nz
         for i = 1:grid.nx+1
             #Use fourth-order interpolation from four cell averages to compute the value at the interface in question
             for ll = 1:NUM_VARS
@@ -175,7 +183,6 @@ function compute_tendencies_x(state, hy_dens_cell, hy_dens_theta_cell, grid)
             end
         end
     end
-    return flux, tend
 end
 
 
@@ -183,9 +190,9 @@ end
 #Since the halos are set in a separate routine, this will not require MPI
 #First, compute the flux vector at each cell interface in the z-direction (including hyperviscosity)
 #Then, compute the tendencies using those fluxes
-function compute_tendencies_z(state, hy_dens_int, hy_dens_theta_int, hy_pressure_int, grid)
-    flux = zeros(grid.nx + 1, grid.nz + 1, NUM_VARS)
-    tend = zeros(grid.nx, grid.nz, NUM_VARS)
+function compute_tendencies_z!(state, flux, tend, hy_dens_int, hy_dens_theta_int, hy_pressure_int, grid)
+#    flux = zeros(grid.nx + 1, grid.nz + 1, NUM_VARS)
+#    tend = zeros(grid.nx, grid.nz, NUM_VARS)
     d3_vals = zeros(NUM_VARS)
     vals = zeros(NUM_VARS)
     stencil = zeros(4)
@@ -249,7 +256,6 @@ function compute_tendencies_z(state, hy_dens_int, hy_dens_theta_int, hy_pressure
             end
         end
     end
-    return flux, tend
 end
 
 
