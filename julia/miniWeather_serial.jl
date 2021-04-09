@@ -12,15 +12,19 @@ function parse_commandline()
     @add_arg_table s begin
         "--nx_glob"
         help = "Total number of cells in the x-direction"
+        arg_type = Int
         default = 100
         "--nz_glob"
         help = "Total number of cells in the z-direction"
+        arg_type = Int
         default = 50
         "--sim_time"
         help = "How many seconds to run the simulation"
-        default = 1000
+        arg_type = Int
+        default = 50
         "--output_freq"
         help = "How frequently to output data to file (in seconds)"
+        arg_type = Int
         default = 10
         "--data_spec_int"
         help = "How to initialize the data"
@@ -150,12 +154,11 @@ function main()
 
     if !isinteractive()
         config = parse_commandline()
-        println(typeof(config))
     else
         config = Dict(
             "nx_glob" => 100,
             "nz_glob" => 50,
-            "sim_time" => 1000,
+            "sim_time" => 50,
             "output_freq" => 10,
             "data_spec_int" => Int(DATA_SPEC_THERMAL),
         )
@@ -175,6 +178,7 @@ function main()
 
     etime = 0.0
     #output(model, etime)
+
 
     time_counter = 0
     direction_switch = true
