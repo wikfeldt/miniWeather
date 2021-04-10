@@ -40,6 +40,7 @@ end
 #state_out = state_init + dt * rhs(state_forcing)
 #Meaning the step starts from state_init, computes the rhs using state_forcing, and stores the result in state_out
 function semi_discrete_step!(model, grid, dir, mode)
+#function semi_discrete_step!(state_init , state_forcing , state_out, grid, dir, data_spec_int)
     # mode=1 sets model.state=state_init & state_forcing and model.state_tmp=state_out
     # mode=2 sets model.state=initial-state and model.state_tmp=state_forcing & state_out
     # mode=3 sets model.state=initial state & state_out and model.state_tmp=state_forcing      
@@ -107,7 +108,9 @@ function semi_discrete_step!(model, grid, dir, mode)
     ## TODO: THREAD ME
     #################################################
     #Apply the tendencies to the fluid state
-    state_out = zeros(size(model.state))
+    #state_out = zeros(size(model.state))
+    state_out = similar(model.state)
+#    state_out = zeros(grid.nx + 2 * hs, grid.nz + 2 * hs, NUM_VARS)    
     for ll = 1:NUM_VARS
         for k = 1:grid.nz
             for i = 1:grid.nx
@@ -142,10 +145,10 @@ function compute_tendencies_x!(state, flux, tend, hy_dens_cell, hy_dens_theta_ce
     ## TODO: THREAD ME
     #################################################
     #Compute fluxes in the x-direction for each cell
-     for k = 1:grid.nz
-        for i = 1:grid.nx+1
+    @inbounds for k = 1:grid.nz
+        @inbounds for i = 1:grid.nx+1
             #Use fourth-order interpolation from four cell averages to compute the value at the interface in question
-            for ll = 1:NUM_VARS
+            @inbounds for ll = 1:NUM_VARS
                 for s = 1:sten_size
                     stencil[s] = state[i+s-1, k+hs, ll]
                 end
@@ -176,9 +179,9 @@ function compute_tendencies_x!(state, flux, tend, hy_dens_cell, hy_dens_theta_ce
     # TODO: THREAD ME
     #####
     #Use the fluxes to compute tendencies for each cell
-    for ll = 1:NUM_VARS
-        for k = 1:grid.nz
-            for i = 1:grid.nx
+    @inbounds for ll = 1:NUM_VARS
+        @inbounds for k = 1:grid.nz
+            @inbounds for i = 1:grid.nx
                 tend[i, k, ll] = -(flux[i+1, k, ll] - flux[i, k, ll]) / grid.dx
             end
         end
@@ -202,10 +205,10 @@ function compute_tendencies_z!(state, flux, tend, hy_dens_int, hy_dens_theta_int
     ## TODO: THREAD ME
     ####
     #Compute fluxes in the x-direction for each cell
-    for k = 1:grid.nz+1
-        for i = 1:grid.nx
+    @inbounds for k = 1:grid.nz+1
+        @inbounds for i = 1:grid.nx
             #Use fourth-order interpolation from four cell averages to compute the value at the interface in question
-            for ll = 1:NUM_VARS
+            @inbounds for ll = 1:NUM_VARS
                 for s = 1:sten_size
                     stencil[s] = state[i+hs, k-1+s, ll]
                 end
@@ -246,9 +249,9 @@ function compute_tendencies_z!(state, flux, tend, hy_dens_int, hy_dens_theta_int
     ## TODO: THREAD ME
     ####
     #Use the fluxes to compute tendencies for each cell
-    for ll = 1:NUM_VARS
-        for k = 1:grid.nz
-            for i = 1:grid.nx
+    @inbounds for ll = 1:NUM_VARS
+        @inbounds for k = 1:grid.nz
+            @inbounds for i = 1:grid.nx
                 tend[i, k, ll] = -(flux[i, k+1, ll] - flux[i, k, ll]) / grid.dz
                 if ll == ID_WMOM
                     tend[i, k, ID_WMOM] = tend[i, k, ID_WMOM] - state[i+hs, k+hs, ID_DENS] * grav
