@@ -1,4 +1,5 @@
 module Timestep
+import Base.Threads.@spawn
 
 include("const.jl")
 include("Initialize.jl")
@@ -40,16 +41,22 @@ end
 #state_out = state_init + dt * rhs(state_forcing)
 #Meaning the step starts from state_init, computes the rhs using state_forcing, and stores the result in state_out
 function semi_discrete_step!(model, grid, dir, mode)
-#function semi_discrete_step!(state_init , state_forcing , state_out, grid, dir, data_spec_int)
+    #function semi_discrete_step!(state_init , state_forcing , state_out, grid, dir, data_spec_int)
     # mode=1 sets model.state=state_init & state_forcing and model.state_tmp=state_out
     # mode=2 sets model.state=initial-state and model.state_tmp=state_forcing & state_out
     # mode=3 sets model.state=initial state & state_out and model.state_tmp=state_forcing      
     # time step depends on mode
-    dt = grid.dt / (4.0-mode)
+    dt = grid.dt / (4.0 - mode)
     if dir == DIR_X
         #Set the halo values for this MPI task's fluid state in the x-direction
         if mode == 1
-            set_halo_values_x!(model.state, model.hy_dens_cell, model.hy_dens_theta_cell, grid, model.data_spec_int)
+            set_halo_values_x!(
+                model.state,
+                model.hy_dens_cell,
+                model.hy_dens_theta_cell,
+                grid,
+                model.data_spec_int,
+            )
             compute_tendencies_x!(
                 model.state,
                 model.flux,
@@ -59,7 +66,13 @@ function semi_discrete_step!(model, grid, dir, mode)
                 grid,
             )
         elseif mode == 2 || mode == 3
-            set_halo_values_x!(model.state_tmp, model.hy_dens_cell, model.hy_dens_theta_cell, grid, model.data_spec_int)
+            set_halo_values_x!(
+                model.state_tmp,
+                model.hy_dens_cell,
+                model.hy_dens_theta_cell,
+                grid,
+                model.data_spec_int,
+            )
             compute_tendencies_x!(
                 model.state_tmp,
                 model.flux,
@@ -110,11 +123,12 @@ function semi_discrete_step!(model, grid, dir, mode)
     #Apply the tendencies to the fluid state
     #state_out = zeros(size(model.state))
     state_out = similar(model.state)
-#    state_out = zeros(grid.nx + 2 * hs, grid.nz + 2 * hs, NUM_VARS)    
+    #    state_out = zeros(grid.nx + 2 * hs, grid.nz + 2 * hs, NUM_VARS)    
     for ll = 1:NUM_VARS
         for k = 1:grid.nz
             for i = 1:grid.nx
-                state_out[i+hs, k+hs, ll] = model.state[i+hs, k+hs, ll] + dt * model.tend[i, k, ll]
+                state_out[i+hs, k+hs, ll] =
+                    model.state[i+hs, k+hs, ll] + dt * model.tend[i, k, ll]
             end
         end
     end
@@ -133,8 +147,8 @@ end
 #First, compute the flux vector at each cell interface in the x-direction (including hyperviscosity)
 #Then, compute the tendencies using those fluxes
 function compute_tendencies_x!(state, flux, tend, hy_dens_cell, hy_dens_theta_cell, grid)
-#    flux = zeros(grid.nx + 1, grid.nz + 1, NUM_VARS)
-#    tend = zeros(grid.nx, grid.nz, NUM_VARS)
+    #    flux = zeros(grid.nx + 1, grid.nz + 1, NUM_VARS)
+    #    tend = zeros(grid.nx, grid.nz, NUM_VARS)
     d3_vals = zeros(NUM_VARS)
     vals = zeros(NUM_VARS)
     stencil = zeros(4)
@@ -193,9 +207,17 @@ end
 #Since the halos are set in a separate routine, this will not require MPI
 #First, compute the flux vector at each cell interface in the z-direction (including hyperviscosity)
 #Then, compute the tendencies using those fluxes
-function compute_tendencies_z!(state, flux, tend, hy_dens_int, hy_dens_theta_int, hy_pressure_int, grid)
-#    flux = zeros(grid.nx + 1, grid.nz + 1, NUM_VARS)
-#    tend = zeros(grid.nx, grid.nz, NUM_VARS)
+function compute_tendencies_z!(
+    state,
+    flux,
+    tend,
+    hy_dens_int,
+    hy_dens_theta_int,
+    hy_pressure_int,
+    grid,
+)
+    #    flux = zeros(grid.nx + 1, grid.nz + 1, NUM_VARS)
+    #    tend = zeros(grid.nx, grid.nz, NUM_VARS)
     d3_vals = zeros(NUM_VARS)
     vals = zeros(NUM_VARS)
     stencil = zeros(4)
@@ -225,9 +247,17 @@ function compute_tendencies_z!(state, flux, tend, hy_dens_int, hy_dens_theta_int
             u = vals[ID_UMOM] / r
             w = vals[ID_WMOM] / r
             t = (vals[ID_RHOT] + hy_dens_theta_int[k]) / r
-            if r*t < 0.0
-              println("k=", k, " vals= ",vals[ID_DENS], vals[ID_RHOT], " hy_dens_thetaint= ", hy_dens_int[k])
-              println("r=$r, t=$t")
+            if r * t < 0.0
+                println(
+                    "k=",
+                    k,
+                    " vals= ",
+                    vals[ID_DENS],
+                    vals[ID_RHOT],
+                    " hy_dens_thetaint= ",
+                    hy_dens_int[k],
+                )
+                println("r=$r, t=$t")
             end
 
             p = C0 * (r * t)^gamma - hy_pressure_int[k]
@@ -254,7 +284,8 @@ function compute_tendencies_z!(state, flux, tend, hy_dens_int, hy_dens_theta_int
             @inbounds for i = 1:grid.nx
                 tend[i, k, ll] = -(flux[i, k+1, ll] - flux[i, k, ll]) / grid.dz
                 if ll == ID_WMOM
-                    tend[i, k, ID_WMOM] = tend[i, k, ID_WMOM] - state[i+hs, k+hs, ID_DENS] * grav
+                    tend[i, k, ID_WMOM] =
+                        tend[i, k, ID_WMOM] - state[i+hs, k+hs, ID_DENS] * grav
                 end
             end
         end
@@ -290,15 +321,16 @@ function set_halo_values_x!(state, hy_dens_cell, hy_dens_theta_cell, grid, data_
     if (data_spec_int == DATA_SPEC_INJECTION)
         #if (myrank == 0)
         for k = 1:grid.nz
-#            for i = 1:hs
+            #            for i = 1:hs
             z = (k_beg - 1 + k - 0.5) * grid.dz
             if (abs(z - 3 * zlen / 4) <= zlen / 16)
-                state[1:2, k, ID_UMOM] = (state[1:2, k, ID_DENS] + hy_dens_cell[k+hs]) * 50.0
+                state[1:2, k, ID_UMOM] =
+                    (state[1:2, k, ID_DENS] + hy_dens_cell[k+hs]) * 50.0
                 state[1:2, k, ID_RHOT] =
                     (state[1:2, k, ID_DENS] + hy_dens_cell[k+hs]) * 298.0 -
                     hy_dens_theta_cell[k+hs]
-              end
- #           end
+            end
+            #           end
         end
         #end
     end
@@ -326,7 +358,8 @@ function set_halo_values_z!(state, grid, data_spec_int)
                     if (abs(x - xlen / 4) < mnt_width)
                         xloc = (x - (xlen / 4)) / mnt_width
                         #Compute the derivative of the fake mountain
-                        mnt_deriv = -pi * cos(pi * xloc / 2) * sin(pi * xloc / 2) * 10 / grid.dx
+                        mnt_deriv =
+                            -pi * cos(pi * xloc / 2) * sin(pi * xloc / 2) * 10 / grid.dx
                         #w = (dz/dx)*u
                         state[i, 1, ID_WMOM] = mnt_deriv * state[i, 3, ID_UMOM]
                         state[i, 2, ID_WMOM] = mnt_deriv * state[i, 3, ID_UMOM]
