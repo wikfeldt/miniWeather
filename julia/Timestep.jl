@@ -5,6 +5,9 @@ include("const.jl")
 include("Initialize.jl")
 using .Initialize: Model, Grid
 
+using LoopVectorization: @avx
+
+
 export perform_timestep!
 
 #Performs a single dimensionally split time step using a simple low-storate three-stage Runge-Kutta time integrator
@@ -125,11 +128,9 @@ function semi_discrete_step!(model, grid, dir, mode)
     state_out = similar(model.state)
     #    state_out = zeros(grid.nx + 2 * hs, grid.nz + 2 * hs, NUM_VARS)    
     for ll = 1:NUM_VARS
-        for k = 1:grid.nz
-            for i = 1:grid.nx
-                state_out[i+hs, k+hs, ll] =
-                    model.state[i+hs, k+hs, ll] + dt * model.tend[i, k, ll]
-            end
+        for k = 1:grid.nz, i = 1:grid.nx         
+            state_out[i+hs, k+hs, ll] =
+                model.state[i+hs, k+hs, ll] + dt * model.tend[i, k, ll]            
         end
     end
     if mode == 1 || mode == 2
@@ -159,46 +160,40 @@ function compute_tendencies_x!(state, flux, tend, hy_dens_cell, hy_dens_theta_ce
     ## TODO: THREAD ME
     #################################################
     #Compute fluxes in the x-direction for each cell
-    @inbounds for k = 1:grid.nz
-        @inbounds for i = 1:grid.nx+1
-            #Use fourth-order interpolation from four cell averages to compute the value at the interface in question
-            @inbounds for ll = 1:NUM_VARS
-                for s = 1:sten_size
-                    stencil[s] = state[i+s-1, k+hs, ll]
-                end
-                #Fourth-order-accurate interpolation of the state
-                vals[ll] =
-                    -stencil[1] / 12 + 7 * stencil[2] / 12 + 7 * stencil[3] / 12 -
-                    stencil[4] / 12
-                #First-order-accurate interpolation of the third spatial derivative of the state (for artificial viscosity)
-                d3_vals[ll] = -stencil[1] + 3 * stencil[2] - 3 * stencil[3] + stencil[4]
+    for k = 1:grid.nz, i = 1:grid.nx+1
+        #Use fourth-order interpolation from four cell averages to compute the value at the interface in question
+        for ll = 1:NUM_VARS
+            for s = 1:sten_size
+                stencil[s] = state[i+s-1, k+hs, ll]
             end
-
-            #Compute density, u-wind, w-wind, potential temperature, and pressure (r,u,w,t,p respectively)
-            r = vals[ID_DENS] + hy_dens_cell[k+hs]
-            u = vals[ID_UMOM] / r
-            w = vals[ID_WMOM] / r
-            t = (vals[ID_RHOT] + hy_dens_theta_cell[k+hs]) / r
-            p = C0 * (r * t)^gamma
-
-            #Compute the flux vector
-            flux[i, k, ID_DENS] = r * u - hv_coef * d3_vals[ID_DENS]
-            flux[i, k, ID_UMOM] = r * u * u + p - hv_coef * d3_vals[ID_UMOM]
-            flux[i, k, ID_WMOM] = r * u * w - hv_coef * d3_vals[ID_WMOM]
-            flux[i, k, ID_RHOT] = r * u * t - hv_coef * d3_vals[ID_RHOT]
+            #Fourth-order-accurate interpolation of the state
+            vals[ll] =
+                -stencil[1] / 12 + 7 * stencil[2] / 12 + 7 * stencil[3] / 12 -
+                stencil[4] / 12
+            #First-order-accurate interpolation of the third spatial derivative of the state (for artificial viscosity)
+            d3_vals[ll] = -stencil[1] + 3 * stencil[2] - 3 * stencil[3] + stencil[4]
         end
+
+        #Compute density, u-wind, w-wind, potential temperature, and pressure (r,u,w,t,p respectively)
+        r = vals[ID_DENS] + hy_dens_cell[k+hs]
+        u = vals[ID_UMOM] / r
+        w = vals[ID_WMOM] / r
+        t = (vals[ID_RHOT] + hy_dens_theta_cell[k+hs]) / r
+        p = C0 * (r * t)^gamma
+
+        #Compute the flux vector
+        flux[i, k, ID_DENS] = r * u - hv_coef * d3_vals[ID_DENS]
+        flux[i, k, ID_UMOM] = r * u * u + p - hv_coef * d3_vals[ID_UMOM]
+        flux[i, k, ID_WMOM] = r * u * w - hv_coef * d3_vals[ID_WMOM]
+        flux[i, k, ID_RHOT] = r * u * t - hv_coef * d3_vals[ID_RHOT]
     end
 
     ######
     # TODO: THREAD ME
     #####
     #Use the fluxes to compute tendencies for each cell
-    @inbounds for ll = 1:NUM_VARS
-        @inbounds for k = 1:grid.nz
-            @inbounds for i = 1:grid.nx
-                tend[i, k, ll] = -(flux[i+1, k, ll] - flux[i, k, ll]) / grid.dx
-            end
-        end
+    for ll = 1:NUM_VARS, k = 1:grid.nz, i = 1:grid.nx
+        tend[i, k, ll] = -(flux[i+1, k, ll] - flux[i, k, ll]) / grid.dx
     end
 end
 
@@ -227,67 +222,48 @@ function compute_tendencies_z!(
     ## TODO: THREAD ME
     ####
     #Compute fluxes in the x-direction for each cell
-    @inbounds for k = 1:grid.nz+1
-        @inbounds for i = 1:grid.nx
-            #Use fourth-order interpolation from four cell averages to compute the value at the interface in question
-            @inbounds for ll = 1:NUM_VARS
-                for s = 1:sten_size
-                    stencil[s] = state[i+hs, k-1+s, ll]
-                end
-                #Fourth-order-accurate interpolation of the state
-                vals[ll] =
-                    -stencil[1] / 12 + 7 * stencil[2] / 12 + 7 * stencil[3] / 12 -
-                    stencil[4] / 12
-                #First-order-accurate interpolation of the third spatial derivative of the state
-                d3_vals[ll] = -stencil[1] + 3 * stencil[2] - 3 * stencil[3] + stencil[4]
+    for k = 1:grid.nz+1, i = 1:grid.nx
+        #Use fourth-order interpolation from four cell averages to compute the value at the interface in question
+        for ll = 1:NUM_VARS
+            for s = 1:sten_size
+                stencil[s] = state[i+hs, k-1+s, ll]
             end
-
-            #Compute density, u-wind, w-wind, potential temperature, and pressure (r,u,w,t,p respectively)
-            r = vals[ID_DENS] + hy_dens_int[k]
-            u = vals[ID_UMOM] / r
-            w = vals[ID_WMOM] / r
-            t = (vals[ID_RHOT] + hy_dens_theta_int[k]) / r
-            if r * t < 0.0
-                println(
-                    "k=",
-                    k,
-                    " vals= ",
-                    vals[ID_DENS],
-                    vals[ID_RHOT],
-                    " hy_dens_thetaint= ",
-                    hy_dens_int[k],
-                )
-                println("r=$r, t=$t")
-            end
-
-            p = C0 * (r * t)^gamma - hy_pressure_int[k]
-            #Enforce vertical boundary condition and exact mass conservation
-            if k == 1 || k == grid.nz + 1
-                w = 0
-                d3_vals[ID_DENS] = 0
-            end
-
-            #Compute the flux vector with hyperviscosity
-            flux[i, k, ID_DENS] = r * w - hv_coef * d3_vals[ID_DENS]
-            flux[i, k, ID_UMOM] = r * w * u - hv_coef * d3_vals[ID_UMOM]
-            flux[i, k, ID_WMOM] = r * w * w + p - hv_coef * d3_vals[ID_WMOM]
-            flux[i, k, ID_RHOT] = r * w * t - hv_coef * d3_vals[ID_RHOT]
+            #Fourth-order-accurate interpolation of the state
+            vals[ll] =
+                -stencil[1] / 12 + 7 * stencil[2] / 12 + 7 * stencil[3] / 12 -
+                stencil[4] / 12
+            #First-order-accurate interpolation of the third spatial derivative of the state
+            d3_vals[ll] = -stencil[1] + 3 * stencil[2] - 3 * stencil[3] + stencil[4]
         end
+
+        #Compute density, u-wind, w-wind, potential temperature, and pressure (r,u,w,t,p respectively)
+        r = vals[ID_DENS] + hy_dens_int[k]
+        u = vals[ID_UMOM] / r
+        w = vals[ID_WMOM] / r
+        t = (vals[ID_RHOT] + hy_dens_theta_int[k]) / r
+        p = C0 * (r * t)^gamma - hy_pressure_int[k]
+        #Enforce vertical boundary condition and exact mass conservation
+        if k == 1 || k == grid.nz + 1
+            w = 0
+            d3_vals[ID_DENS] = 0
+        end
+
+        #Compute the flux vector with hyperviscosity
+        flux[i, k, ID_DENS] = r * w - hv_coef * d3_vals[ID_DENS]
+        flux[i, k, ID_UMOM] = r * w * u - hv_coef * d3_vals[ID_UMOM]
+        flux[i, k, ID_WMOM] = r * w * w + p - hv_coef * d3_vals[ID_WMOM]
+        flux[i, k, ID_RHOT] = r * w * t - hv_coef * d3_vals[ID_RHOT]
     end
 
     ####
     ## TODO: THREAD ME
     ####
     #Use the fluxes to compute tendencies for each cell
-    @inbounds for ll = 1:NUM_VARS
-        @inbounds for k = 1:grid.nz
-            @inbounds for i = 1:grid.nx
-                tend[i, k, ll] = -(flux[i, k+1, ll] - flux[i, k, ll]) / grid.dz
-                if ll == ID_WMOM
-                    tend[i, k, ID_WMOM] =
-                        tend[i, k, ID_WMOM] - state[i+hs, k+hs, ID_DENS] * grav
-                end
-            end
+    for ll = 1:NUM_VARS, k = 1:grid.nz, i = 1:grid.nx
+        tend[i, k, ll] = -(flux[i, k+1, ll] - flux[i, k, ll]) / grid.dz
+        if ll == ID_WMOM
+            tend[i, k, ID_WMOM] =
+                tend[i, k, ID_WMOM] - state[i+hs, k+hs, ID_DENS] * grav
         end
     end
 end
