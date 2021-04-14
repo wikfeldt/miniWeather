@@ -5,6 +5,7 @@ include("Initialize.jl")
 using .Initialize: init, Model, Grid
 include("Timestep.jl")
 using .Timestep: perform_timestep!
+using ProgressMeter
 
 function parse_commandline()
     s = ArgParseSettings()
@@ -179,12 +180,13 @@ function main()
     direction_switch = true
     output_counter = 0.0
     counter = 1
-    while etime < sim_time
+    @showprogress for i in 1:grid.nt
+    #while etime < sim_time
 
         if output_counter >= output_freq
             counter += 1
             output_counter = output_counter - output_freq
-            println(counter, "  ", etime)
+            #println(counter, "  ", etime)
             snapshots[:,:,:,counter] = createSnapshot(model, grid)
             etimes[counter] = etime
         end
