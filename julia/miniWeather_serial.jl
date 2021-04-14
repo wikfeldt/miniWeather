@@ -42,21 +42,19 @@ function reductions(model, grid)
     nx, nz = grid.nx, grid.nz
     dx, dz = grid.dx, grid.dz
 
-    for k = 1:nz
-        for i = 1:nx
-            r = model.state[i, k, ID_DENS] + model.hy_dens_cell[k]       # Density
-            u = model.state[i, k, ID_UMOM] / r                           # U-wind
-            w = model.state[i, k, ID_WMOM] / r                           # W-wind
-            th = (model.state[i, k, ID_RHOT] + model.hy_dens_theta_cell[k]) / r # Potential Temperature (theta)
-            p = C0 * (r * th)^gamma      # Pressure
-            t = th / (p0 / p)^(rd / cp)  # Temperature
-            ke = r * (u * u + w * w)           # Kinetic Energy
-            ie = r * cv * t                # Internal Energy
-            mass = mass + r * dx * dz # Accumulate domain mass
-            te = te + (ke + r * cv * t) * dx * dz # Accumulate domain total energy
-            #println(r, u, w, th)
-        end
-    end
+    for k = 1:nz, i = 1:nx
+        r = model.state[hs+i, hs+k, ID_DENS] + model.hy_dens_cell[hs+k]       # Density
+        u = model.state[hs+i, hs+k, ID_UMOM] / r                           # U-wind
+        w = model.state[hs+i, hs+k, ID_WMOM] / r                           # W-wind
+        th = (model.state[hs+i, hs+k, ID_RHOT] + model.hy_dens_theta_cell[hs+k]) / r # Potential Temperature (theta)
+        p = C0 * (r * th)^gamma      # Pressure
+        t = th / (p0 / p)^(rd / cp)  # Temperature
+        ke = r * (u * u + w * w)           # Kinetic Energy
+        ie = r * cv * t                # Internal Energy
+        mass = mass + r * dx * dz # Accumulate domain mass
+        te = te + (ke + ie) * dx * dz # Accumulate domain total energy
+        #println(r, u, w, th)
+      end
 
     #    double glob[2], loc[2];
     #    loc[0] = mass;
