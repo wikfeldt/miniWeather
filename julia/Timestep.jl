@@ -262,8 +262,7 @@ function compute_tendencies_z!(
     for ll = 1:NUM_VARS, k = 1:grid.nz, i = 1:grid.nx
         tend[i, k, ll] = -(flux[i, k+1, ll] - flux[i, k, ll]) / grid.dz
         if ll == ID_WMOM
-            tend[i, k, ID_WMOM] =
-                tend[i, k, ID_WMOM] - state[i+hs, k+hs, ID_DENS] * grav
+            tend[i, k, ll] -= state[i+hs, k+hs, ID_DENS] * grav
         end
     end
 end
@@ -286,10 +285,10 @@ function set_halo_values_x!(state, hy_dens_cell, hy_dens_theta_cell, grid, data_
     ###
     for ll = 1:NUM_VARS
         for k = 1:grid.nz
-            state[1, k, ll] = state[grid.nx+1, k, ll]
-            state[2, k, ll] = state[grid.nx+2, k, ll]
-            state[grid.nx+3, k, ll] = state[3, k, ll]
-            state[grid.nx+4, k, ll] = state[4, k, ll]
+            state[1, hs+k, ll] = state[grid.nx+hs-1, hs+k, ll]
+            state[2, hs+k, ll] = state[grid.nx+hs, hs+k, ll]
+            state[grid.nx+hs+1, hs+k, ll] = state[hs+1, hs+k, ll]
+            state[grid.nx+hs+2, hs+k, ll] = state[hs+2, hs+k, ll]
         end
     end
     ###
@@ -297,16 +296,14 @@ function set_halo_values_x!(state, hy_dens_cell, hy_dens_theta_cell, grid, data_
     if (data_spec_int == DATA_SPEC_INJECTION)
         #if (myrank == 0)
         for k = 1:grid.nz
-            #            for i = 1:hs
             z = (k_beg - 1 + k - 0.5) * grid.dz
             if (abs(z - 3 * zlen / 4) <= zlen / 16)
-                state[1:2, k, ID_UMOM] =
-                    (state[1:2, k, ID_DENS] + hy_dens_cell[k+hs]) * 50.0
-                state[1:2, k, ID_RHOT] =
-                    (state[1:2, k, ID_DENS] + hy_dens_cell[k+hs]) * 298.0 -
+                state[1:2, hs+k, ID_UMOM] =
+                    (state[1:2, hs+k, ID_DENS] + hy_dens_cell[k+hs]) * 50.0
+                state[1:2, hs+k, ID_RHOT] =
+                    (state[1:2, hs+k, ID_DENS] + hy_dens_cell[k+hs]) * 298.0 -
                     hy_dens_theta_cell[k+hs]
             end
-            #           end
         end
         #end
     end
@@ -326,8 +323,8 @@ function set_halo_values_z!(state, grid, data_spec_int)
             if (ll == ID_WMOM)
                 state[i, 1, ll] = 0
                 state[i, 2, ll] = 0
-                state[i, grid.nz+3, ll] = 0
-                state[i, grid.nz+4, ll] = 0
+                state[i, grid.nz+hs+1, ll] = 0
+                state[i, grid.nz+hs+2, ll] = 0
                 #Impose the vertical momentum effects of an artificial cos^2 mountain at the lower boundary
                 if (data_spec_int == DATA_SPEC_MOUNTAIN)
                     x = (i_beg - 1 + i - 0.5) * grid.dx
