@@ -67,84 +67,64 @@ function reductions(model, grid)
     return mass, te
 end
 
-#=
+function createSnapshot(model, grid)
+
+    snapshot = Array{Float64}(undef, 4, grid.nx, grid.nz)
+    #Store perturbed values in the temp arrays for output
+    for k = 1:grid.nz
+        for i = 1:grid.nx
+            snapshot[1, i, k] =  model.state[i, hs+k, ID_DENS]
+            snapshot[2, i, k] =
+                model.state[i, hs+k, ID_UMOM] /
+                (model.hy_dens_cell[hs+k] + model.state[i, hs+k, ID_DENS])
+            snapshot[3, i, k] =
+                model.state[i, hs+k, ID_WMOM] /
+                (model.hy_dens_cell[hs+k] + model.state[i, hs+k, ID_DENS])
+            snapshot[4, i, k] =
+                (model.state[i, hs+k, ID_RHOT] + model.hy_dens_theta_cell[hs+k]) /
+                (model.hy_dens_cell[hs+k] + model.state[i, hs+k, ID_DENS]) -
+                model.hy_dens_theta_cell[hs+k] / model.hy_dens_cell[hs+k]
+        end
+    end
+
+    return snapshot
+end
+
+
+#
 #Output the fluid state (state) to a NetCDF file at a given elapsed model time (etime)
 #The file I/O uses parallel-netcdf, the only external library required for this mini-app.
 #If it's too cumbersome, you can comment the I/O out, but you'll miss out on some potentially cool graphics
-function output(state, etime, grid, nt, ncfile="output.nc")
-  integer :: ncid, t_dimid, x_dimid, z_dimid, dens_varid, uwnd_varid, wwnd_varid, theta_varid, t_varid
-  integer :: i,k
-  integer, save :: num_out = 0
-  integer(kind=MPI_OFFSET_KIND) :: len, st1(1),ct1(1),st3(3),ct3(3)
-  #If the elapsed time is zero, create the file. Otherwise, open the file
-  if etime == 0 
-    #Create the file
-    nccreate(ncfile, "time", "t", nt, Dict("units"=>"s"))
-    nccreate(ncfile, "dens", "x", nx, Dict("units"=>"m"), "z", nz, Dict("units"=>"m"), "time", nt, Dict("units"=>"s"))
-    nccreate(ncfile, "uwnd", "x", nx, Dict("units"=>"m"), "z", nz, Dict("units"=>"m"), "time", nt, Dict("units"=>"s"))
-    nccreate(ncfile, "wwnd", "x", nx, Dict("units"=>"m"), "z", nz, Dict("units"=>"m"), "time", nt, Dict("units"=>"s"))
-    nccreate(ncfile, "theta", "x", nx, Dict("units"=>"m"), "z", nz, Dict("units"=>"m"), "time", nt, Dict("units"=>"s"))    
-    dens = zeros(grid.nx, grid.nz, nt)
-    uwnd = zeros(grid.nx, grid.nz, nt)
-    wwnd = zeros(grid.nx, grid.nz, nt)
-    theta = zeros(grid.nx,grid.nz, nt)
-  else
-    t_old = ncread(ncfile, "t")
-    dens_old = ncread(ncfile, "dens")
-    uwnd_old = ncread(ncfile, "uwnd")
-    wwnd_old = ncread(ncfile, "wwnd")
-    theta_old = ncread(ncfile, "theta")
-    nt = length(t_old)
-    dens = cat(dens_old, dens, dims=3)
-    uwnd = cat(uwnd_old, uwnd, dims=3)
-    wwnd = cat(wwnd_old, wwnd, dims=3)
-    theta = cat(theta_old, theta, dims=3)
-    push!(t_old, etime)
-  end
+function output(snapshots, grid, etimes, ncfile="output.nc")
+  #Create new file
+  isfile(ncfile) && rm(ncfile)
+  _, nx, nz, _ = size(snapshots)
+  nt = length(etimes)
+  nccreate(ncfile, "dens", "x", collect(range(0,stop=grid.nx*grid.dx, length=grid.nx)), Dict("units"=>"m"), 
+                           "z", collect(range(0,stop=grid.nz*grid.dz, length=grid.nz)), Dict("units"=>"m"), 
+                           "time", etimes, Dict("units"=>"s"))
+  nccreate(ncfile, "uwnd", "x", collect(range(0,stop=grid.nx*grid.dx, length=grid.nx)), Dict("units"=>"m"), 
+                           "z", collect(range(0,stop=grid.nz*grid.dz, length=grid.nz)), Dict("units"=>"m"), 
+                           "time", etimes, Dict("units"=>"s"))
+  nccreate(ncfile, "wwnd", "x", collect(range(0,stop=grid.nx*grid.dx, length=grid.nx)), Dict("units"=>"m"), 
+                           "z", collect(range(0,stop=grid.nz*grid.dz, length=grid.nz)), Dict("units"=>"m"), 
+                           "time", etimes, Dict("units"=>"s"))
+  nccreate(ncfile, "theta", "x", collect(range(0,stop=grid.nx*grid.dx, length=grid.nx)), Dict("units"=>"m"), 
+                           "z", collect(range(0,stop=grid.nz*grid.dz, length=grid.nz)), Dict("units"=>"m"), 
+                           "time", etimes, Dict("units"=>"s"))
 
-
-
-  #Store perturbed values in the temp arrays for output
-  for k=1:nz
-    for i=1:nx
-      dens[i,k] = state[i,k,ID_DENS]
-      uwnd[i,k] = state[i,k,ID_UMOM] / (hy_dens_cell[k] + state[i,k,ID_DENS])
-      wwnd[i,k] = state[i,k,ID_WMOM] / (hy_dens_cell[k] + state[i,k,ID_DENS])
-      theta[i,k] = (state[i,k,ID_RHOT] + hy_dens_theta_cell[k]) / (hy_dens_cell[k] + state[i,k,ID_DENS]) - hy_dens_theta_cell[k] / hy_dens_cell[k]
-    end
-  end
-
-      
-end
-
-    #Write the grid data to file with all the processes writing collectively
-    ncwrite(dens, ncfile, "dens")
-    ncwrite(uwnd, ncfile, "uwnd")
-    ncwrite(wwnd, ncfile, "wwnd")
-    ncwrite(theta, ncfile, "theta")
-    ncwrite(etime, ncfile, "time")
-  else
-
-
-end
-
-
+                           #nccreate(ncfile, "uwnd", "x", nx, Dict("units"=>"m"), "z", nz, Dict("units"=>"m"), "time", nt, Dict("units"=>"s"))
+  #nccreate(ncfile, "wwnd", "x", nx, Dict("units"=>"m"), "z", nz, Dict("units"=>"m"), "time", nt, Dict("units"=>"s"))
+  #nccreate(ncfile, "theta", "x", nx, Dict("units"=>"m"), "z", nz, Dict("units"=>"m"), "time", nt, Dict("units"=>"s"))    
+  #exit()
   #Write the grid data to file with all the processes writing collectively
-  ncwrite(dens, ncfile, "dens")
-  ncwrite(uwnd, ncfile, "uwnd")
-  ncwrite(wwnd, ncfile, "wwnd")
-  ncwrite(theta, ncfile, "theta")
-  ncwrite(etime, ncfile, "time")
+#  ncwrite(etimes, ncfile, "time")
+  ncwrite(snapshots[1, :, :, 1:nt], ncfile, "dens")
+  ncwrite(snapshots[2, :, :, 1:nt], ncfile, "uwnd")
+  ncwrite(snapshots[3, :, :, 1:nt], ncfile, "wwnd")
+  ncwrite(snapshots[4, :, :, 1:nt], ncfile, "theta")
 
-
-
-  #Increment the number of outputs
-#  num_out = num_out + 1
-
-  #Deallocate the temp arrays
-end 
- =#
-
+end
 
 
 
@@ -173,27 +153,60 @@ function main()
     #init(config);
     #println(model)
 
-    mass, te = reductions(model, grid)
-    println("mass = $mass, te = $te")
+    mass0, te0 = reductions(model, grid)
+    println("mass = $mass0, te = $te0")
 
     etime = 0.0
     #output(model, etime)
 
+    #=
+    anim_dens = Animation()
+    anim_uwnd = Animation()
+    anim_wwnd = Animation()
+    anim_theta = Animation()
+    anim = [anim_dens, anim_uwnd, anim_wwnd, anim_theta]
+    #output_gif!(model, etime, grid, anim);
+    =#
+    output_freq = config["output_freq"]
+    sim_time = config["sim_time"]
 
-    time_counter = 0
+    nsnaps = floor(Int, sim_time/output_freq) + 1
+    snapshots = Array{Float64}(undef, 4, grid.nx, grid.nz, nsnaps)
+    etimes = Vector{Float64}(undef, nsnaps)
+
+    # output initial state
+    snapshots[:,:,:,1] = createSnapshot(model, grid)
+
+
     direction_switch = true
-    for i = 1:grid.nt
-        if mod(time_counter, config["output_freq"]) == 0
-            println(etime)
+    output_counter = 0.0
+    counter = 1
+    while etime < sim_time
+
+        if output_counter >= output_freq
+            counter += 1
+            output_counter = output_counter - output_freq
+            println(counter, "  ", etime)
+            snapshots[:,:,:,counter] = createSnapshot(model, grid)
+            etimes[counter] = etime
         end
 
         perform_timestep!(model, grid, direction_switch)
         direction_switch = !direction_switch
         etime += grid.dt
-        time_counter += 1
+        output_counter += grid.dt
+        #output_gif!(model, etime, grid, anim);
+
     end
 
+    mass, te = reductions(model, grid)
+    println("d_mass: ", (mass - mass0) / mass0)
+    println("d_te:   ", (te - te0) / te0)
+
+    output(snapshots, grid, etimes)
+
 end
+
 
 
 main()
