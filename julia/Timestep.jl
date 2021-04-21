@@ -6,6 +6,7 @@ include("Initialize.jl")
 using .Initialize: Model, Grid
 
 using LoopVectorization: @avx
+import Base.Threads.@spawn
 
 
 export perform_timestep!
@@ -192,8 +193,10 @@ function compute_tendencies_x!(state, flux, tend, hy_dens_cell, hy_dens_theta_ce
     # TODO: THREAD ME
     #####
     #Use the fluxes to compute tendencies for each cell
-    for ll = 1:NUM_VARS, k = 1:grid.nz, i = 1:grid.nx
-        tend[i, k, ll] = -(flux[i+1, k, ll] - flux[i, k, ll]) / grid.dx
+    for ll = 1:NUM_VARS 
+        for k = 1:grid.nz, i = 1:grid.nx
+            tend[i, k, ll] = -(flux[i+1, k, ll] - flux[i, k, ll]) / grid.dx
+        end
     end
 end
 
@@ -259,10 +262,12 @@ function compute_tendencies_z!(
     ## TODO: THREAD ME
     ####
     #Use the fluxes to compute tendencies for each cell
-    for ll = 1:NUM_VARS, k = 1:grid.nz, i = 1:grid.nx
-        tend[i, k, ll] = -(flux[i, k+1, ll] - flux[i, k, ll]) / grid.dz
-        if ll == ID_WMOM
-            tend[i, k, ll] -= state[i+hs, k+hs, ID_DENS] * grav
+    for ll = 1:NUM_VARS 
+        for k = 1:grid.nz, i = 1:grid.nx
+            tend[i, k, ll] = -(flux[i, k+1, ll] - flux[i, k, ll]) / grid.dz
+            if ll == ID_WMOM
+                tend[i, k, ll] -= state[i+hs, k+hs, ID_DENS] * grav
+            end
         end
     end
 end
